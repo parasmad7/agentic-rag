@@ -1,0 +1,144 @@
+sources:
+  # ── SQL Tables ──────────────────────────────────────────────────
+  - id: sql_departments
+    source_type: sql
+    domain: hr
+    name: departments
+    description: "Company departments with budget allocations and department heads"
+    key_fields: [name, budget, head]
+    sample_questions:
+      - "What is the budget for the Engineering department?"
+      - "Who heads the Finance department?"
+      - "List all departments and their budgets"
+
+  - id: sql_employees
+    source_type: sql
+    domain: hr
+    name: employees
+    description: "Employee records including name, role, salary, department assignment, and hire date"
+    key_fields: [name, role, salary, department_id, hire_date]
+    sample_questions:
+      - "How many engineers do we have?"
+      - "What is the average salary by department?"
+      - "Who was hired in 2022?"
+
+  - id: sql_vendors
+    source_type: sql
+    domain: procurement
+    name: vendors
+    description: "Vendor registry with contact info, category, active/inactive status, and onboarding date"
+    key_fields: [name, category, status, onboarded_date]
+    sample_questions:
+      - "Which vendors are currently active?"
+      - "List all technology vendors"
+      - "Which vendors were onboarded in 2021?"
+
+  - id: sql_invoices
+    source_type: sql
+    domain: finance
+    name: invoices
+    description: "Vendor invoices with amounts, payment status (paid/pending/overdue), issue and due dates"
+    key_fields: [vendor_id, amount, status, issue_date, due_date, paid_date]
+    sample_questions:
+      - "What is the total outstanding invoice amount?"
+      - "Which invoices are overdue?"
+      - "How much did we pay vendor X?"
+
+  - id: sql_purchase_orders
+    source_type: sql
+    domain: procurement
+    name: purchase_orders
+    description: "Purchase orders with approval status, approval level (manager/director/VP), and requesting employee"
+    key_fields: [vendor_id, requester_id, total_amount, status, approval_level]
+    sample_questions:
+      - "Which POs are pending approval?"
+      - "What purchases required VP-level approval?"
+      - "Show rejected purchase orders"
+
+  - id: sql_line_items
+    source_type: sql
+    domain: procurement
+    name: line_items
+    description: "Individual line items within purchase orders showing what was purchased, quantity, and unit price"
+    key_fields: [purchase_order_id, description, quantity, unit_price]
+    sample_questions:
+      - "What items were ordered in PO-2025-001?"
+      - "What is the most expensive single item purchased?"
+
+  # ── MongoDB Collections ────────────────────────────────────────
+  - id: nosql_customer_feedback
+    source_type: nosql
+    domain: customer_success
+    name: customer_feedback
+    description: "Customer satisfaction feedback with ratings, sentiment, and free-text comments across products"
+    key_fields: [customer_name, rating, sentiment, product, feedback]
+    sample_questions:
+      - "What are customers saying about our support?"
+      - "What is the average customer rating?"
+      - "Which customers gave negative feedback?"
+
+  - id: nosql_vendor_reviews
+    source_type: nosql
+    domain: procurement
+    name: vendor_reviews
+    description: "Internal reviews of vendor performance by employees, including ratings and category-specific feedback"
+    key_fields: [vendor_name, reviewer, rating, review, categories]
+    sample_questions:
+      - "How is Acme Cloud Services rated?"
+      - "Which vendors have low performance scores?"
+      - "What issues were raised about BuildRight Construction?"
+
+  - id: nosql_support_tickets
+    source_type: nosql
+    domain: customer_success
+    name: support_tickets
+    description: "Customer support tickets with priority, status, assignment, and resolution details"
+    key_fields: [customer_name, subject, priority, status, category, resolution]
+    sample_questions:
+      - "How many open support tickets do we have?"
+      - "What critical tickets were filed in February?"
+      - "What billing issues have customers reported?"
+
+  # ── PDF Documents ──────────────────────────────────────────────
+  - id: pdf_expense_policy
+    source_type: pdf
+    domain: finance
+    name: expense_policy.pdf
+    description: "Company expense and procurement policy defining approval thresholds, vendor payment terms, expense categories, and compliance rules"
+    key_fields: [approval_thresholds, payment_terms, expense_categories, vendor_policy]
+    sample_questions:
+      - "What is the approval threshold for purchases over $50,000?"
+      - "What are the vendor payment terms?"
+      - "What happens with non-compliant spending?"
+
+  - id: pdf_q1_report
+    source_type: pdf
+    domain: finance
+    name: q1_2025_financial_report.pdf
+    description: "Q1 2025 quarterly financial report with revenue breakdown, operating expenses by department, vendor performance, and customer health analysis"
+    key_fields: [revenue, expenses, vendor_performance, customer_health, risks]
+    sample_questions:
+      - "What was Q1 2025 revenue?"
+      - "Which department went over budget?"
+      - "What are the key risks identified in Q1?"
+
+  - id: pdf_vendor_guide
+    source_type: pdf
+    domain: procurement
+    name: vendor_onboarding_guide.pdf
+    description: "Guide for onboarding new vendors including required documentation, vendor categories and risk levels, approval workflow, and performance monitoring criteria"
+    key_fields: [onboarding_process, vendor_categories, documentation_requirements, performance_criteria]
+    sample_questions:
+      - "What documents are needed to onboard a new vendor?"
+      - "How long does vendor onboarding take?"
+      - "What is the performance monitoring process for vendors?"
+
+domains:
+  - name: hr
+    description: "Human resources - employees, departments, organizational structure"
+  - name: finance
+    description: "Financial data - invoices, payments, budgets, revenue, expenses"
+  - name: procurement
+    description: "Vendor management - purchase orders, vendor onboarding, vendor reviews"
+  - name: customer_success
+    description: "Customer interactions - feedback, support tickets, satisfaction"

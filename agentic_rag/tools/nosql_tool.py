@@ -121,22 +121,12 @@ JSON QUERY:"""
             row_count=0,
         )
 
-    summary_prompt = f"""Given this MongoDB query and its results, provide a concise summary answering the original question.
-
-QUESTION: {question}
-QUERY: {query_text}
-RESULTS ({len(docs)} documents): {json.dumps(docs[:10], default=str)}
-
-Provide a 2-3 sentence summary of the findings:"""
-
-    summary_text = generate(summary_prompt)
-
     return MetaResponse(
         source=collection_name,
         source_type="nosql",
         query_used=query_text,
         confidence=0.9 if docs else 0.3,
-        summary=summary_text,
+        summary=json.dumps(docs[:10], default=str),
         data=docs[:20],
         row_count=len(docs),
     )

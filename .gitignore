@@ -5,3 +5,4 @@ data/
 *.json
 !catalog.yaml
 .DS_Store
+node_modules/

@@ -106,22 +106,12 @@ SQL QUERY:"""
             row_count=0,
         )
 
-    summary_prompt = f"""Given this SQL query and its results, provide a concise summary answering the original question.
-
-QUESTION: {question}
-SQL QUERY: {sql_query}
-RESULTS ({count} rows): {json.dumps(rows[:20], default=str)}
-
-Provide a 2-3 sentence summary of the findings:"""
-
-    summary_text = generate(summary_prompt)
-
     return MetaResponse(
         source=", ".join(table_names),
         source_type="sql",
         query_used=sql_query,
         confidence=0.9 if count > 0 else 0.3,
-        summary=summary_text,
+        summary=json.dumps(rows[:20], default=str),
         data=rows[:50],
         row_count=count,
     )

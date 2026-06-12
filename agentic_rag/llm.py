@@ -3,6 +3,7 @@
 import os
 
 from google import genai
+from google.genai.types import GenerateContentConfig, ThinkingConfig
 from google.oauth2 import service_account
 
 from agentic_rag.config import (
@@ -46,5 +47,24 @@ def get_client() -> genai.Client:
 
 def generate(prompt: str) -> str:
     client = get_client()
-    response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=GenerateContentConfig(
+            thinking_config=ThinkingConfig(thinking_budget=0),
+        ),
+    )
     return response.text.strip()
+
+
+def generate_stream(prompt: str):
+    client = get_client()
+    for chunk in client.models.generate_content_stream(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=GenerateContentConfig(
+            thinking_config=ThinkingConfig(thinking_budget=0),
+        ),
+    ):
+        if chunk.text:
+            yield chunk.text

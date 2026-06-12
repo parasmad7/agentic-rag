@@ -4,7 +4,6 @@ import chromadb
 
 from agentic_rag.config import CHROMA_DIR
 from agentic_rag.ingestion.pdf_pipeline import PDF_COLLECTION
-from agentic_rag.llm import generate
 from agentic_rag.models import MetaResponse
 
 
@@ -90,18 +89,6 @@ def search_pdfs(question: str, source_filter: list[str] | None = None) -> MetaRe
     expanded_context = _expand_context(hits)
     sources_found = list({h["metadata"]["source"] for h in hits})
 
-    prompt = f"""Based on the following document excerpts, answer the user's question.
-Cite the specific document and section when possible.
-
-QUESTION: {question}
-
-DOCUMENT EXCERPTS:
-{expanded_context}
-
-Provide a concise, accurate answer based only on the provided excerpts:"""
-
-    response_text = generate(prompt)
-
     chunk_data = [
         {
             "source": h["metadata"]["source"],
@@ -119,7 +106,7 @@ Provide a concise, accurate answer based only on the provided excerpts:"""
         source_type="pdf",
         query_used=question,
         confidence=round(min(avg_relevance + 0.2, 1.0), 2),
-        summary=response_text,
+        summary=expanded_context,
         data=chunk_data,
         row_count=len(hits),
     )

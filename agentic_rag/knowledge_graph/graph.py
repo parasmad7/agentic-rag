@@ -1,4 +1,4 @@
-"""Knowledge graph connecting all data sources via structural, semantic, and governance edges."""
+"""Knowledge graph connecting all data sources via structural, semantic, governance, and derived edges."""
 
 import networkx as nx
 
@@ -6,34 +6,34 @@ from agentic_rag.catalog.catalog_search import load_catalog
 from agentic_rag.models import CatalogEntry, GraphEdge
 
 STRUCTURAL_EDGES = [
-    GraphEdge(source="sql_invoices", target="sql_vendors", edge_type="structural", description="invoices reference vendors via vendor_id"),
-    GraphEdge(source="sql_purchase_orders", target="sql_vendors", edge_type="structural", description="purchase orders reference vendors via vendor_id"),
-    GraphEdge(source="sql_purchase_orders", target="sql_employees", edge_type="structural", description="purchase orders reference employees via requester_id"),
-    GraphEdge(source="sql_line_items", target="sql_purchase_orders", edge_type="structural", description="line items belong to purchase orders"),
-    GraphEdge(source="sql_employees", target="sql_departments", edge_type="structural", description="employees belong to departments"),
+    GraphEdge(source="sql_workout_sessions", target="sql_members", edge_type="structural", description="workout sessions reference members via member_id"),
+    GraphEdge(source="sql_workout_sessions", target="sql_trainers", edge_type="structural", description="workout sessions reference trainers via trainer_id"),
+    GraphEdge(source="sql_memberships", target="sql_members", edge_type="structural", description="memberships belong to members via member_id"),
+    GraphEdge(source="sql_body_metrics", target="sql_members", edge_type="structural", description="body metrics recorded for members via member_id"),
+    GraphEdge(source="sql_classes", target="sql_trainers", edge_type="structural", description="classes are taught by trainers via trainer_id"),
 ]
 
 SEMANTIC_EDGES = [
-    GraphEdge(source="sql_vendors", target="nosql_vendor_reviews", edge_type="semantic", description="vendor master data connects to vendor performance reviews"),
-    GraphEdge(source="sql_invoices", target="nosql_vendor_reviews", edge_type="semantic", description="invoice payment history relates to vendor performance feedback"),
-    GraphEdge(source="nosql_customer_feedback", target="nosql_support_tickets", edge_type="semantic", description="customer feedback often references issues tracked in support tickets"),
-    GraphEdge(source="sql_invoices", target="nosql_support_tickets", edge_type="semantic", description="billing-related support tickets reference invoice data"),
-    GraphEdge(source="sql_employees", target="nosql_support_tickets", edge_type="semantic", description="support tickets are assigned to employees"),
-    GraphEdge(source="sql_departments", target="pdf_q1_report", edge_type="semantic", description="Q1 report contains department budget vs actual analysis"),
+    GraphEdge(source="sql_members", target="nosql_nutrition_logs", edge_type="semantic", description="member profiles connect to their nutrition tracking logs"),
+    GraphEdge(source="sql_members", target="nosql_health_assessments", edge_type="semantic", description="member profiles connect to their periodic health assessments"),
+    GraphEdge(source="sql_trainers", target="nosql_trainer_reviews", edge_type="semantic", description="trainer records connect to member reviews of their performance"),
+    GraphEdge(source="sql_workout_sessions", target="nosql_nutrition_logs", edge_type="semantic", description="workout calorie burn relates to daily nutrition and calorie intake"),
+    GraphEdge(source="sql_body_metrics", target="nosql_health_assessments", edge_type="semantic", description="body metric measurements overlap with health assessment measurements"),
+    GraphEdge(source="sql_classes", target="pdf_q1_report", edge_type="semantic", description="Q1 report contains class attendance and capacity analysis"),
 ]
 
 GOVERNANCE_EDGES = [
-    GraphEdge(source="pdf_expense_policy", target="sql_purchase_orders", edge_type="governance", description="expense policy defines approval thresholds for purchase orders"),
-    GraphEdge(source="pdf_expense_policy", target="sql_invoices", edge_type="governance", description="expense policy defines vendor payment terms governing invoices"),
-    GraphEdge(source="pdf_expense_policy", target="sql_vendors", edge_type="governance", description="expense policy defines inactive vendor rules"),
-    GraphEdge(source="pdf_vendor_guide", target="sql_vendors", edge_type="governance", description="vendor onboarding guide defines the process for adding new vendors"),
-    GraphEdge(source="pdf_vendor_guide", target="nosql_vendor_reviews", edge_type="governance", description="vendor guide defines performance monitoring criteria used in reviews"),
+    GraphEdge(source="pdf_safety_guidelines", target="sql_workout_sessions", edge_type="governance", description="safety guidelines govern how workout sessions should be conducted"),
+    GraphEdge(source="pdf_safety_guidelines", target="sql_classes", edge_type="governance", description="safety guidelines define class capacity limits and warm-up requirements"),
+    GraphEdge(source="pdf_nutrition_guide", target="nosql_nutrition_logs", edge_type="governance", description="nutrition guide defines recommended macros and calorie targets for meal logging"),
+    GraphEdge(source="pdf_safety_guidelines", target="sql_trainers", edge_type="governance", description="safety guidelines define trainer responsibilities and certification requirements"),
+    GraphEdge(source="pdf_nutrition_guide", target="nosql_health_assessments", edge_type="governance", description="nutrition guide recommendations inform health assessment dietary advice"),
 ]
 
 DERIVED_EDGES = [
-    GraphEdge(source="pdf_q1_report", target="sql_invoices", edge_type="derived", description="Q1 report vendor performance section is derived from invoice payment data"),
-    GraphEdge(source="pdf_q1_report", target="nosql_customer_feedback", edge_type="derived", description="Q1 report customer health section is derived from customer feedback"),
-    GraphEdge(source="pdf_q1_report", target="nosql_support_tickets", edge_type="derived", description="Q1 report references critical support tickets"),
+    GraphEdge(source="pdf_q1_report", target="sql_memberships", edge_type="derived", description="Q1 report membership growth section is derived from membership billing data"),
+    GraphEdge(source="pdf_q1_report", target="nosql_trainer_reviews", edge_type="derived", description="Q1 report trainer performance section is derived from member reviews"),
+    GraphEdge(source="pdf_q1_report", target="sql_body_metrics", edge_type="derived", description="Q1 report health outcomes section is derived from body metric tracking data"),
 ]
 
 ALL_EDGES = STRUCTURAL_EDGES + SEMANTIC_EDGES + GOVERNANCE_EDGES + DERIVED_EDGES
@@ -113,8 +113,8 @@ def setup():
     print(f"  Governance edges: {sum(1 for _, _, d in graph.edges(data=True) if d['edge_type'] == 'governance')}")
     print(f"  Derived edges: {sum(1 for _, _, d in graph.edges(data=True) if d['edge_type'] == 'derived')}")
 
-    print("\nExpansion test — starting from 'sql_invoices' (1 hop):")
-    results = expand_sources(graph, ["sql_invoices"], max_hops=1)
+    print("\nExpansion test — starting from 'sql_members' (1 hop):")
+    results = expand_sources(graph, ["sql_members"], max_hops=1)
     for r in results:
         marker = " *" if r["directly_selected"] else ""
         print(f"  {r['id']}{marker} ({r['source_type']}) — {len(r['edges'])} connections")

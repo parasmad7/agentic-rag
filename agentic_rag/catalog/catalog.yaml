@@ -1,144 +1,145 @@
 sources:
   # ── SQL Tables ──────────────────────────────────────────────────
-  - id: sql_departments
+  - id: sql_members
     source_type: sql
-    domain: hr
-    name: departments
-    description: "Company departments with budget allocations and department heads"
-    key_fields: [name, budget, head]
+    domain: member_management
+    name: members
+    description: "Gym members with name, contact info, membership type (basic/premium/elite), join date, and status (active/inactive/frozen)"
+    key_fields: [name, email, membership_type, join_date, status]
     sample_questions:
-      - "What is the budget for the Engineering department?"
-      - "Who heads the Finance department?"
-      - "List all departments and their budgets"
+      - "How many active members do we have?"
+      - "Which members have elite memberships?"
+      - "Who joined the gym in 2024?"
 
-  - id: sql_employees
+  - id: sql_trainers
     source_type: sql
-    domain: hr
-    name: employees
-    description: "Employee records including name, role, salary, department assignment, and hire date"
-    key_fields: [name, role, salary, department_id, hire_date]
+    domain: training
+    name: trainers
+    description: "Personal trainers with specialization, certification, hire date, and hourly rate"
+    key_fields: [name, specialization, certification, hire_date, hourly_rate]
     sample_questions:
-      - "How many engineers do we have?"
-      - "What is the average salary by department?"
-      - "Who was hired in 2022?"
+      - "Which trainers specialize in HIIT?"
+      - "What certifications do our trainers hold?"
+      - "What is the average trainer hourly rate?"
 
-  - id: sql_vendors
+  - id: sql_workout_sessions
     source_type: sql
-    domain: procurement
-    name: vendors
-    description: "Vendor registry with contact info, category, active/inactive status, and onboarding date"
-    key_fields: [name, category, status, onboarded_date]
+    domain: training
+    name: workout_sessions
+    description: "Logged workout sessions with member, optional trainer, date, workout type (strength/cardio/HIIT/yoga/pilates), duration, and calories burned"
+    key_fields: [member_id, trainer_id, session_date, workout_type, duration_min, calories_burned]
     sample_questions:
-      - "Which vendors are currently active?"
-      - "List all technology vendors"
-      - "Which vendors were onboarded in 2021?"
+      - "How many workout sessions happened in January?"
+      - "What is the average calories burned per HIIT session?"
+      - "Which members work out the most?"
 
-  - id: sql_invoices
+  - id: sql_memberships
     source_type: sql
-    domain: finance
-    name: invoices
-    description: "Vendor invoices with amounts, payment status (paid/pending/overdue), issue and due dates"
-    key_fields: [vendor_id, amount, status, issue_date, due_date, paid_date]
+    domain: member_management
+    name: memberships
+    description: "Membership billing records with plan type, start/end dates, monthly fee, and status (active/expired/cancelled)"
+    key_fields: [member_id, plan_type, start_date, end_date, monthly_fee, status]
     sample_questions:
-      - "What is the total outstanding invoice amount?"
-      - "Which invoices are overdue?"
-      - "How much did we pay vendor X?"
+      - "How many active memberships are there by plan type?"
+      - "What is the total monthly revenue from memberships?"
+      - "Which memberships were cancelled?"
 
-  - id: sql_purchase_orders
+  - id: sql_classes
     source_type: sql
-    domain: procurement
-    name: purchase_orders
-    description: "Purchase orders with approval status, approval level (manager/director/VP), and requesting employee"
-    key_fields: [vendor_id, requester_id, total_amount, status, approval_level]
+    domain: training
+    name: classes
+    description: "Group fitness classes with name, assigned trainer, schedule day/time, capacity, current enrollment, and category"
+    key_fields: [name, trainer_id, schedule_day, time_slot, max_capacity, current_enrollment, category]
     sample_questions:
-      - "Which POs are pending approval?"
-      - "What purchases required VP-level approval?"
-      - "Show rejected purchase orders"
+      - "Which classes are at full capacity?"
+      - "What classes does Derek Washington teach?"
+      - "Show all HIIT classes and their schedules"
 
-  - id: sql_line_items
+  - id: sql_body_metrics
     source_type: sql
-    domain: procurement
-    name: line_items
-    description: "Individual line items within purchase orders showing what was purchased, quantity, and unit price"
-    key_fields: [purchase_order_id, description, quantity, unit_price]
+    domain: member_management
+    name: body_metrics
+    description: "Member body composition tracking over time including weight, body fat percentage, BMI, and resting heart rate"
+    key_fields: [member_id, recorded_date, weight_kg, body_fat_pct, bmi, resting_heart_rate]
     sample_questions:
-      - "What items were ordered in PO-2025-001?"
-      - "What is the most expensive single item purchased?"
+      - "Which members are losing weight?"
+      - "What is the average BMI of our members?"
+      - "Show body metrics progress for Sarah Johnson"
 
   # ── MongoDB Collections ────────────────────────────────────────
-  - id: nosql_customer_feedback
+  - id: nosql_nutrition_logs
     source_type: nosql
-    domain: customer_success
-    name: customer_feedback
-    description: "Customer satisfaction feedback with ratings, sentiment, and free-text comments across products"
-    key_fields: [customer_name, rating, sentiment, product, feedback]
+    domain: nutrition
+    name: nutrition_logs
+    description: "Daily meal logs with individual meals, calorie/macro breakdowns, water intake, and trainer notes"
+    key_fields: [member_name, date, meals, daily_totals, water_liters, notes]
     sample_questions:
-      - "What are customers saying about our support?"
-      - "What is the average customer rating?"
-      - "Which customers gave negative feedback?"
+      - "What is the average daily calorie intake across members?"
+      - "Which members are not meeting protein targets?"
+      - "Who has the lowest water intake?"
 
-  - id: nosql_vendor_reviews
+  - id: nosql_trainer_reviews
     source_type: nosql
-    domain: procurement
-    name: vendor_reviews
-    description: "Internal reviews of vendor performance by employees, including ratings and category-specific feedback"
-    key_fields: [vendor_name, reviewer, rating, review, categories]
+    domain: training
+    name: trainer_reviews
+    description: "Member reviews of personal trainers with ratings, detailed feedback, and review categories"
+    key_fields: [trainer_name, member_name, rating, review, categories]
     sample_questions:
-      - "How is Acme Cloud Services rated?"
-      - "Which vendors have low performance scores?"
-      - "What issues were raised about BuildRight Construction?"
+      - "What is Marcus Rivera's average rating?"
+      - "Which trainers have low ratings?"
+      - "What feedback did members give about HIIT classes?"
 
-  - id: nosql_support_tickets
+  - id: nosql_health_assessments
     source_type: nosql
-    domain: customer_success
-    name: support_tickets
-    description: "Customer support tickets with priority, status, assignment, and resolution details"
-    key_fields: [customer_name, subject, priority, status, category, resolution]
+    domain: wellness
+    name: health_assessments
+    description: "Periodic health assessments with vitals (blood pressure, heart rate, VO2 max), body measurements, goals, recommendations, and risk factors"
+    key_fields: [member_name, assessment_date, vitals, measurements, goals, recommendations, risk_factors]
     sample_questions:
-      - "How many open support tickets do we have?"
-      - "What critical tickets were filed in February?"
-      - "What billing issues have customers reported?"
+      - "Which members have health risk factors?"
+      - "What are the common fitness goals?"
+      - "Show Sarah Johnson's health assessment progress"
 
   # ── PDF Documents ──────────────────────────────────────────────
-  - id: pdf_expense_policy
+  - id: pdf_safety_guidelines
     source_type: pdf
-    domain: finance
-    name: expense_policy.pdf
-    description: "Company expense and procurement policy defining approval thresholds, vendor payment terms, expense categories, and compliance rules"
-    key_fields: [approval_thresholds, payment_terms, expense_categories, vendor_policy]
+    domain: wellness
+    name: gym_safety_guidelines.pdf
+    description: "Gym safety guidelines covering equipment usage rules, trainer responsibilities, injury prevention protocols, class safety, and emergency procedures"
+    key_fields: [equipment_rules, trainer_responsibilities, injury_protocols, class_safety, emergency_procedures]
     sample_questions:
-      - "What is the approval threshold for purchases over $50,000?"
-      - "What are the vendor payment terms?"
-      - "What happens with non-compliant spending?"
+      - "What are the rules for using free weights?"
+      - "What are trainers responsible for regarding safety?"
+      - "What is the emergency procedure for medical incidents?"
 
   - id: pdf_q1_report
     source_type: pdf
-    domain: finance
-    name: q1_2025_financial_report.pdf
-    description: "Q1 2025 quarterly financial report with revenue breakdown, operating expenses by department, vendor performance, and customer health analysis"
-    key_fields: [revenue, expenses, vendor_performance, customer_health, risks]
+    domain: wellness
+    name: q1_2025_fitness_report.pdf
+    description: "Q1 2025 quarterly fitness center report with membership growth, class attendance, trainer performance ratings, member health outcomes, and key risks"
+    key_fields: [membership_growth, class_attendance, trainer_performance, health_outcomes, risks]
     sample_questions:
-      - "What was Q1 2025 revenue?"
-      - "Which department went over budget?"
+      - "How did membership grow in Q1 2025?"
+      - "Which trainer has the lowest rating?"
       - "What are the key risks identified in Q1?"
 
-  - id: pdf_vendor_guide
+  - id: pdf_nutrition_guide
     source_type: pdf
-    domain: procurement
-    name: vendor_onboarding_guide.pdf
-    description: "Guide for onboarding new vendors including required documentation, vendor categories and risk levels, approval workflow, and performance monitoring criteria"
-    key_fields: [onboarding_process, vendor_categories, documentation_requirements, performance_criteria]
+    domain: nutrition
+    name: nutrition_program_guide.pdf
+    description: "Nutrition program guide with macronutrient targets by fitness goal, meal timing, hydration guidelines, supplement recommendations, and logging requirements"
+    key_fields: [macro_targets, meal_timing, hydration, supplements, logging_requirements]
     sample_questions:
-      - "What documents are needed to onboard a new vendor?"
-      - "How long does vendor onboarding take?"
-      - "What is the performance monitoring process for vendors?"
+      - "What protein intake is recommended for muscle building?"
+      - "How much water should members drink daily?"
+      - "What supplements are recommended?"
 
 domains:
-  - name: hr
-    description: "Human resources - employees, departments, organizational structure"
-  - name: finance
-    description: "Financial data - invoices, payments, budgets, revenue, expenses"
-  - name: procurement
-    description: "Vendor management - purchase orders, vendor onboarding, vendor reviews"
-  - name: customer_success
-    description: "Customer interactions - feedback, support tickets, satisfaction"
+  - name: member_management
+    description: "Member data — profiles, memberships, billing, body composition tracking"
+  - name: training
+    description: "Training operations — trainers, workout sessions, group classes, trainer reviews"
+  - name: nutrition
+    description: "Nutrition — meal logs, dietary guidelines, macronutrient targets, supplements"
+  - name: wellness
+    description: "Health & wellness — health assessments, safety guidelines, quarterly fitness reports"

@@ -7,16 +7,10 @@ import {
   Server,
   ChevronDown,
   ChevronRight,
-  Activity,
   Dumbbell,
   Zap,
-  Heart,
   Loader2,
-  Sparkles,
-  GitBranch,
-  Search,
   Brain,
-  Layers,
   MessageSquare,
   Check,
 } from "lucide-react";
@@ -31,37 +25,44 @@ interface Source {
   row_count: number;
 }
 
-interface Pipeline {
-  domains: string[];
-  catalog_candidates: number;
-  selected_sources: string[];
-  kg_expanded: string[];
-  total_queried: number;
+interface AgentCall {
+  tool: string;
+  args: Record<string, string>;
+  turn: number;
+}
+
+interface AgentResult {
+  source: string;
+  type: string;
+  confidence: number;
+  row_count: number;
+  summary: string;
+  attempts: number;
+}
+
+interface AgentStep {
+  call: AgentCall;
+  result?: AgentResult;
+}
+
+interface AgentMeta {
+  sources_consulted: Source[];
+  turns: number;
 }
 
 interface QueryResult {
   question: string;
   answer: string;
   sources_consulted: Source[];
-  pipeline: Pipeline;
-}
-
-type StageStatus = "pending" | "active" | "done";
-
-interface StageState {
-  domain_classification: { status: StageStatus; domains?: string[] };
-  catalog_search: { status: StageStatus; candidates?: number };
-  reranking: { status: StageStatus; selected?: string[] };
-  kg_expansion: { status: StageStatus; added?: string[] };
-  tool_execution: { status: StageStatus; total?: number };
-  synthesizing: { status: StageStatus };
+  agent_trace: AgentStep[];
 }
 
 interface StreamingState {
-  stages: StageState;
-  sources: Source[];
+  currentTurn: number;
+  steps: AgentStep[];
+  synthesizing: boolean;
   tokens: string;
-  pipeline: Pipeline | null;
+  meta: AgentMeta | null;
   done: boolean;
 }
 
@@ -75,15 +76,6 @@ interface Message {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
-
-const INITIAL_STAGES: StageState = {
-  domain_classification: { status: "pending" },
-  catalog_search: { status: "pending" },
-  reranking: { status: "pending" },
-  kg_expansion: { status: "pending" },
-  tool_execution: { status: "pending" },
-  synthesizing: { status: "pending" },
-};
 
 const sourceIcon = (type: string) => {
   switch (type) {
@@ -134,168 +126,156 @@ const confidenceBar = (confidence: number) => {
 
 // ── Components ─────────────────────────────────────────────────
 
-const STAGE_META: Record<
-  string,
-  { icon: React.ReactNode; label: string; color: string }
-> = {
-  domain_classification: {
-    icon: <Search className="w-3.5 h-3.5" />,
-    label: "Classifying domains",
-    color: "text-violet-400",
-  },
-  catalog_search: {
-    icon: <Layers className="w-3.5 h-3.5" />,
-    label: "Searching catalog",
+const toolMeta: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
+  query_sql: {
+    icon: <Database className="w-3.5 h-3.5" />,
+    label: "SQL Agent",
     color: "text-blue-400",
   },
-  reranking: {
-    icon: <Sparkles className="w-3.5 h-3.5" />,
-    label: "Reranking sources",
-    color: "text-amber-400",
-  },
-  kg_expansion: {
-    icon: <GitBranch className="w-3.5 h-3.5" />,
-    label: "Expanding via KG",
+  query_nosql: {
+    icon: <Server className="w-3.5 h-3.5" />,
+    label: "NoSQL Agent",
     color: "text-emerald-400",
   },
-  tool_execution: {
-    icon: <Zap className="w-3.5 h-3.5" />,
-    label: "Querying tools",
-    color: "text-rose-400",
-  },
-  synthesizing: {
-    icon: <Brain className="w-3.5 h-3.5" />,
-    label: "Synthesizing",
-    color: "text-indigo-400",
+  search_pdfs: {
+    icon: <FileText className="w-3.5 h-3.5" />,
+    label: "PDF Agent",
+    color: "text-amber-400",
   },
 };
 
-function LivePipelineStages({ stages }: { stages: StageState }) {
-  const stageOrder = [
-    "domain_classification",
-    "catalog_search",
-    "reranking",
-    "kg_expansion",
-    "tool_execution",
-    "synthesizing",
-  ] as const;
-
-  const getDetail = (key: string): string => {
-    const s = stages[key as keyof StageState] as Record<string, unknown>;
-    switch (key) {
-      case "domain_classification":
-        return s.domains ? (s.domains as string[]).join(", ") : "";
-      case "catalog_search":
-        return s.candidates != null ? `${s.candidates} candidates` : "";
-      case "reranking":
-        return s.selected ? `${(s.selected as string[]).length} selected` : "";
-      case "kg_expansion": {
-        const added = s.added as string[] | undefined;
-        return added?.length ? `+${added.length} sources` : "none added";
-      }
-      case "tool_execution":
-        return s.total != null ? `${s.total} sources` : "";
-      default:
-        return "";
-    }
-  };
-
+function LiveAgentTrace({
+  steps,
+  currentTurn,
+  synthesizing,
+}: {
+  steps: AgentStep[];
+  currentTurn: number;
+  synthesizing: boolean;
+}) {
   return (
-    <div className="flex flex-wrap items-center gap-1 mb-3">
-      {stageOrder.map((key, i) => {
-        const meta = STAGE_META[key];
-        const stage = stages[key];
-        const detail = getDetail(key);
-        const isPending = stage.status === "pending";
-        const isActive = stage.status === "active";
-        const isDone = stage.status === "done";
+    <div className="space-y-1.5 mb-3">
+      {steps.map((step, i) => {
+        const meta = toolMeta[step.call.tool] || {
+          icon: <Zap className="w-3.5 h-3.5" />,
+          label: step.call.tool,
+          color: "text-gray-400",
+        };
+        const hasResult = !!step.result;
+        const argLabel =
+          step.call.args.table_name ||
+          step.call.args.collection_name ||
+          step.call.args.pdf_name ||
+          "";
 
         return (
-          <div key={key} className="flex items-center gap-1">
-            <div
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-all duration-300 ${
-                isPending
-                  ? "bg-gray-800/40 border border-gray-800/50 opacity-40"
-                  : isActive
-                    ? "bg-gray-800/80 border border-gray-600/50 ring-1 ring-violet-500/30"
-                    : "bg-gray-800/80 border border-gray-700/50"
-              }`}
-            >
-              <span className={isDone ? "text-emerald-400" : meta.color}>
-                {isDone ? <Check className="w-3.5 h-3.5" /> : isActive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : meta.icon}
-              </span>
-              <span className={isPending ? "text-gray-600" : "text-gray-400"}>
-                {meta.label}
-              </span>
-              {detail && isDone && (
-                <>
-                  <span className="text-gray-600">·</span>
-                  <span className="text-gray-300">{detail}</span>
-                </>
+          <div
+            key={i}
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-all duration-300 ${
+              hasResult
+                ? "bg-gray-800/80 border border-gray-700/50"
+                : "bg-gray-800/80 border border-gray-600/50 ring-1 ring-violet-500/30"
+            }`}
+          >
+            <span className="text-gray-600 tabular-nums w-4">
+              {step.call.turn}
+            </span>
+            <span className={hasResult ? "text-emerald-400" : meta.color}>
+              {hasResult ? (
+                <Check className="w-3.5 h-3.5" />
+              ) : (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               )}
-            </div>
-            {i < stageOrder.length - 1 && (
-              <ChevronRight className="w-3 h-3 text-gray-700" />
+            </span>
+            <span className={meta.color}>{meta.label}</span>
+            {argLabel && (
+              <>
+                <span className="text-gray-600">·</span>
+                <span className="text-gray-400">{argLabel}</span>
+              </>
+            )}
+            {hasResult && step.result && (
+              <>
+                <span className="text-gray-600">·</span>
+                <span className="text-gray-300">
+                  {step.result.row_count} results
+                </span>
+                {step.result.attempts > 1 && (
+                  <span className="text-amber-400">
+                    (retried {step.result.attempts}x)
+                  </span>
+                )}
+              </>
             )}
           </div>
         );
       })}
+      {synthesizing && (
+        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs bg-gray-800/80 border border-gray-600/50 ring-1 ring-indigo-500/30">
+          <span className="text-gray-600 tabular-nums w-4" />
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+          <span className="text-indigo-400">Synthesizing answer</span>
+        </div>
+      )}
+      {!synthesizing && steps.length === 0 && currentTurn > 0 && (
+        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs bg-gray-800/80 border border-gray-600/50 ring-1 ring-violet-500/30">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-400" />
+          <span className="text-violet-400">
+            Orchestrator reasoning (turn {currentTurn})
+          </span>
+        </div>
+      )}
     </div>
   );
 }
 
-function PipelineStages({ pipeline }: { pipeline: Pipeline }) {
-  const stages = [
-    {
-      icon: <Search className="w-3.5 h-3.5" />,
-      label: "Domain Classification",
-      detail: pipeline.domains.join(", "),
-      color: "text-violet-400",
-    },
-    {
-      icon: <Layers className="w-3.5 h-3.5" />,
-      label: "Catalog Search",
-      detail: `${pipeline.catalog_candidates} candidates`,
-      color: "text-blue-400",
-    },
-    {
-      icon: <Sparkles className="w-3.5 h-3.5" />,
-      label: "LLM Reranking",
-      detail: `${pipeline.selected_sources.length} selected`,
-      color: "text-amber-400",
-    },
-    {
-      icon: <GitBranch className="w-3.5 h-3.5" />,
-      label: "KG Expansion",
-      detail:
-        pipeline.kg_expanded.length > 0
-          ? `+${pipeline.kg_expanded.join(", +")}`
-          : "no expansion needed",
-      color: "text-emerald-400",
-    },
-    {
-      icon: <Zap className="w-3.5 h-3.5" />,
-      label: "Tool Execution",
-      detail: `${pipeline.total_queried} sources queried`,
-      color: "text-rose-400",
-    },
-  ];
-
+function AgentTraceSteps({ steps }: { steps: AgentStep[] }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {stages.map((stage, i) => (
-        <div key={i} className="flex items-center gap-1">
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-800/80 border border-gray-700/50 text-xs">
-            <span className={stage.color}>{stage.icon}</span>
-            <span className="text-gray-400">{stage.label}</span>
-            <span className="text-gray-500">·</span>
-            <span className="text-gray-300">{stage.detail}</span>
+    <div className="space-y-1">
+      {steps.map((step, i) => {
+        const meta = toolMeta[step.call.tool] || {
+          icon: <Zap className="w-3.5 h-3.5" />,
+          label: step.call.tool,
+          color: "text-gray-400",
+        };
+        const argLabel =
+          step.call.args.table_name ||
+          step.call.args.collection_name ||
+          step.call.args.pdf_name ||
+          "";
+
+        return (
+          <div
+            key={i}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-800/80 border border-gray-700/50 text-xs"
+          >
+            <span className="text-gray-600 tabular-nums w-4">
+              {step.call.turn}
+            </span>
+            <span className={meta.color}>{meta.icon}</span>
+            <span className="text-gray-400">{meta.label}</span>
+            {argLabel && (
+              <>
+                <span className="text-gray-500">·</span>
+                <span className="text-gray-300">{argLabel}</span>
+              </>
+            )}
+            {step.result && (
+              <>
+                <span className="text-gray-500">·</span>
+                <span className="text-gray-300">
+                  {step.result.row_count} results
+                </span>
+                {step.result.attempts > 1 && (
+                  <span className="text-amber-400">
+                    (retried {step.result.attempts}x)
+                  </span>
+                )}
+              </>
+            )}
           </div>
-          {i < stages.length - 1 && (
-            <ChevronRight className="w-3 h-3 text-gray-600" />
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -346,14 +326,22 @@ function SourceCard({ source }: { source: Source }) {
 }
 
 function AssistantMessage({ message }: { message: Message }) {
-  const [showPipeline, setShowPipeline] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
   const result = message.result;
   const streaming = message.streaming;
   const isStreaming = streaming && !streaming.done;
 
-  const content = result ? result.answer : streaming ? streaming.tokens : message.content;
-  const sources = result ? result.sources_consulted : streaming ? streaming.sources : [];
-  const pipeline = result?.pipeline ?? streaming?.pipeline ?? null;
+  const content = result
+    ? result.answer
+    : streaming
+      ? streaming.tokens
+      : message.content;
+
+  const sources = result
+    ? result.sources_consulted
+    : streaming?.meta?.sources_consulted ?? [];
+
+  const steps = result?.agent_trace ?? streaming?.steps ?? [];
 
   return (
     <div className="animate-fade-in-up">
@@ -362,12 +350,16 @@ function AssistantMessage({ message }: { message: Message }) {
           <Brain className="w-4 h-4 text-white" />
         </div>
         <div className="flex-1 min-w-0 space-y-3">
-          {/* Live pipeline stages while streaming */}
-          {streaming && (
-            <LivePipelineStages stages={streaming.stages} />
+          {/* Live agent trace while streaming */}
+          {streaming && !streaming.done && (
+            <LiveAgentTrace
+              steps={streaming.steps}
+              currentTurn={streaming.currentTurn}
+              synthesizing={streaming.synthesizing}
+            />
           )}
 
-          {/* Sources as they arrive */}
+          {/* Source cards */}
           {sources.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {sources.map((src, i) => (
@@ -379,43 +371,27 @@ function AssistantMessage({ message }: { message: Message }) {
           {/* Answer text (streaming or final) */}
           {content && (
             <div className="prose prose-invert prose-sm max-w-none text-gray-200 leading-relaxed">
-              <ReactMarkdown>{content + (isStreaming && streaming.tokens ? "▍" : "")}</ReactMarkdown>
+              <ReactMarkdown>
+                {content + (isStreaming && streaming.tokens ? "▍" : "")}
+              </ReactMarkdown>
             </div>
           )}
 
-          {/* Completed pipeline toggle (only after stream finishes) */}
-          {!streaming && result && (
+          {/* Agent trace toggle (after done) */}
+          {(streaming?.done || result) && steps.length > 0 && (
             <div className="space-y-2">
               <button
-                onClick={() => setShowPipeline(!showPipeline)}
+                onClick={() => setShowTrace(!showTrace)}
                 className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
               >
-                {showPipeline ? (
+                {showTrace ? (
                   <ChevronDown className="w-3.5 h-3.5" />
                 ) : (
                   <ChevronRight className="w-3.5 h-3.5" />
                 )}
-                Pipeline stages
+                Agent trace ({steps.length} calls)
               </button>
-              {showPipeline && <PipelineStages pipeline={result.pipeline} />}
-            </div>
-          )}
-
-          {/* Pipeline toggle after streaming done */}
-          {streaming?.done && pipeline && (
-            <div className="space-y-2">
-              <button
-                onClick={() => setShowPipeline(!showPipeline)}
-                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
-              >
-                {showPipeline ? (
-                  <ChevronDown className="w-3.5 h-3.5" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5" />
-                )}
-                Pipeline details
-              </button>
-              {showPipeline && <PipelineStages pipeline={pipeline} />}
+              {showTrace && <AgentTraceSteps steps={steps} />}
             </div>
           )}
 
@@ -496,37 +472,7 @@ function parseSSE(text: string): Array<{ event: string; data: string }> {
   return events;
 }
 
-// ── Stage transition helpers ───────────────────────────────────
-
-const STAGE_ORDER = [
-  "domain_classification",
-  "catalog_search",
-  "reranking",
-  "kg_expansion",
-  "tool_execution",
-  "synthesizing",
-] as const;
-
-function advanceStages(
-  current: StageState,
-  completedName: string,
-  extras: Record<string, unknown>,
-): StageState {
-  const next = { ...current };
-  const idx = STAGE_ORDER.indexOf(completedName as (typeof STAGE_ORDER)[number]);
-
-  for (let i = 0; i < STAGE_ORDER.length; i++) {
-    const key = STAGE_ORDER[i] as keyof StageState;
-    if (i < idx) {
-      next[key] = { ...next[key], status: "done" };
-    } else if (i === idx) {
-      next[key] = { ...next[key], ...extras, status: "done" } as StageState[typeof key];
-    } else if (i === idx + 1) {
-      next[key] = { ...next[key], status: "active" };
-    }
-  }
-  return next;
-}
+// ── SSE event handlers ────────────────────────────────────────
 
 // ── App ────────────────────────────────────────────────────────
 
@@ -558,10 +504,11 @@ export default function App() {
 
     const assistantId = crypto.randomUUID();
     const initialStreaming: StreamingState = {
-      stages: { ...INITIAL_STAGES, domain_classification: { status: "active" } },
-      sources: [],
+      currentTurn: 0,
+      steps: [],
+      synthesizing: false,
       tokens: "",
-      pipeline: null,
+      meta: null,
       done: false,
     };
 
@@ -610,29 +557,54 @@ export default function App() {
 
             switch (evt.event) {
               case "stage": {
-                const { name, ...extras } = data;
+                if (data.name === "reasoning") {
+                  state = { ...state, currentTurn: data.turn };
+                } else if (data.name === "synthesizing") {
+                  state = { ...state, synthesizing: true };
+                }
+                break;
+              }
+              case "agent_call": {
+                const call: AgentCall = {
+                  tool: data.tool,
+                  args: data.args,
+                  turn: data.turn,
+                };
                 state = {
                   ...state,
-                  stages: advanceStages(state.stages, name, extras),
+                  steps: [...state.steps, { call }],
                 };
                 break;
               }
-              case "source":
-                state = {
-                  ...state,
-                  sources: [...state.sources, data as Source],
-                };
+              case "agent_result": {
+                const agentResult: AgentResult = data as AgentResult;
+                const updatedSteps = [...state.steps];
+                let pending = -1;
+                for (let i = updatedSteps.length - 1; i >= 0; i--) {
+                  if (!updatedSteps[i].result) {
+                    pending = i;
+                    break;
+                  }
+                }
+                if (pending >= 0) {
+                  updatedSteps[pending] = {
+                    ...updatedSteps[pending],
+                    result: agentResult,
+                  };
+                }
+                state = { ...state, steps: updatedSteps };
                 break;
+              }
               case "token":
-                state = {
-                  ...state,
-                  tokens: state.tokens + data.text,
-                };
+                state = { ...state, tokens: state.tokens + data.text };
                 break;
               case "done":
                 state = {
                   ...state,
-                  pipeline: data.pipeline,
+                  meta: {
+                    sources_consulted: data.sources_consulted ?? [],
+                    turns: data.turns ?? 0,
+                  },
                   done: true,
                 };
                 break;

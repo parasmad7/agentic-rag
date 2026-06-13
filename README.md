@@ -1,12 +1,12 @@
 # Agentic RAG
 
-Multi-source RAG system that queries across SQL databases, NoSQL (MongoDB), and PDFs using agentic orchestration powered by Gemini. The project explores four different orchestration approaches — from a deterministic linear pipeline to fully agentic reasoning loops with CrewAI, Google ADK, and LangGraph.
+Multi-source RAG system that queries across SQL databases, NoSQL (MongoDB), and PDFs using agentic orchestration powered by Gemini. The project explores five different orchestration approaches — from a deterministic linear pipeline to fully agentic reasoning loops with vanilla Gemini function calling, CrewAI, Google ADK, and LangGraph.
 
 ## Architecture
 
-The system has four orchestration implementations, each on its own branch:
+The system has five orchestration implementations, each on its own branch:
 
-### `main` / `linear-pipeline` — Deterministic Pipeline
+### `linear-pipeline` — Deterministic Pipeline (No Agents)
 
 ```
 User Query
@@ -47,7 +47,9 @@ User Query
      Final Answer
 ```
 
-### `crewai` / `google-adk` / `langgraph` — Multi-Agent Architecture
+The pipeline uses Gemini for classification, reranking, and synthesis, but the **control flow is hardcoded** — the programmer decides every step. No agents, no reasoning loop.
+
+### `main` / `crewai` / `google-adk` / `langgraph` — Multi-Agent Architecture (4 Agents)
 
 ```
 User Query
@@ -71,11 +73,12 @@ User Query
      Final Answer (with agent trace)
 ```
 
-The orchestrator LLM decides which specialist to call, inspects results, and either calls another specialist or produces the final answer. Each specialist agent has its own retry-with-error-feedback loop.
+The orchestrator LLM decides which specialist to call, inspects results, and either calls another specialist or produces the final answer. Each specialist agent has its own retry-with-error-feedback loop. The **LLM controls the flow** — it decides what to query, in what order, and when to stop.
 
 | Branch | Framework | Orchestration Style |
 |---|---|---|
-| `main` / `linear-pipeline` | Gemini SDK direct | Fixed 6-stage pipeline, parallel fan-out |
+| `linear-pipeline` | Gemini SDK direct | Fixed 6-stage pipeline, parallel fan-out, no agents |
+| `main` | Gemini SDK function calling | 4-agent reasoning loop, no framework |
 | `crewai` | CrewAI | Agent/Crew/Task with tool delegation |
 | `google-adk` | Google ADK (Antigravity) | Async agent with pre-turn hooks |
 | `langgraph` | LangGraph + Gemini | StateGraph with call_model ↔ execute_tools cycle |
@@ -84,12 +87,13 @@ The orchestrator LLM decides which specialist to call, inspects results, and eit
 
 | Component | Description |
 |---|---|
+| **Orchestrator Agent** | Gemini function-calling reasoning loop (max 10 turns) — decides which specialists to call and when to stop |
+| **SQL Agent** | Generates SQL from table schemas, executes read-only, retries with error feedback |
+| **NoSQL Agent** | Generates MongoDB queries from collection schemas, retries with error feedback |
+| **PDF Agent** | Vector search over chunked PDFs with parent section context expansion |
 | **Catalog** | YAML metadata registry for 12 sources, embedded into ChromaDB for semantic search |
 | **Knowledge Graph** | NetworkX graph with structural, semantic, governance, and derived edges |
 | **PDF Pipeline** | Hierarchical chunking (document → section → chunk) with small-to-big retrieval |
-| **SQL Agent/Tool** | Gemini generates SQL from table schemas, executes read-only with LIMIT |
-| **NoSQL Agent/Tool** | Gemini generates MongoDB queries from collection schemas |
-| **PDF Agent/Tool** | Vector search over chunked PDFs with parent section context expansion |
 | **FastAPI Backend** | REST + SSE streaming API for the React frontend |
 | **React UI** | Real-time chat interface with pipeline stage visualization and source cards |
 
@@ -206,13 +210,13 @@ agentic_rag/
 │   ├── nosql_tool.py        # MongoDB query gen → execute → MetaResponse
 │   └── pdf_tool.py          # Vector search + context expansion → MetaResponse
 └── agents/
-    ├── orchestrator.py      # Entry point (delegates to orchestrator_agent on agentic branches)
-    ├── base.py              # BaseAgent abstract class (agentic branches)
-    ├── messages.py          # Pydantic message types (agentic branches)
-    ├── sql_agent.py         # SQL specialist with retry loop (agentic branches)
-    ├── nosql_agent.py       # NoSQL specialist with retry loop (agentic branches)
-    ├── pdf_agent.py         # PDF specialist (agentic branches)
-    └── orchestrator_agent.py # Framework-specific reasoning loop (agentic branches)
+    ├── orchestrator.py      # Entry point (delegates to orchestrator_agent)
+    ├── orchestrator_agent.py # Gemini function-calling reasoning loop (vanilla, no framework)
+    ├── base.py              # BaseAgent abstract class with tracing
+    ├── messages.py          # Pydantic message types for inter-agent communication
+    ├── sql_agent.py         # SQL specialist with retry-on-error loop
+    ├── nosql_agent.py       # NoSQL specialist with retry-on-error loop
+    └── pdf_agent.py         # PDF specialist with vector search + context expansion
 api/
 └── app.py                   # FastAPI backend (REST + SSE streaming)
 ui/

@@ -1,6 +1,5 @@
 """Agentic RAG — Interactive CLI."""
 
-import json
 import sys
 
 from agentic_rag.agents.orchestrator import run_query
@@ -21,16 +20,18 @@ def print_result(result: dict):
         print(f"         Confidence: {conf_bar} {src['confidence']:.1f}")
         print(f"         Results: {src['row_count']} | {src['summary'][:100]}...")
 
-    print("\n" + "-" * 80)
-    print("PIPELINE")
-    print("-" * 80)
-    p = result["pipeline"]
-    print(f"  Domains:           {p['domains']}")
-    print(f"  Catalog candidates: {p['catalog_candidates']}")
-    print(f"  Selected sources:  {p['selected_sources']}")
-    print(f"  KG expanded:       {p['kg_expanded']}")
-    print(f"  Total queried:     {p['total_queried']}")
-    print()
+    if "agent_trace" in result and result["agent_trace"]:
+        print("\n" + "-" * 80)
+        print("AGENT TRACE")
+        print("-" * 80)
+        for step in result["agent_trace"]:
+            status = "ok" if step.get("confidence", 0) > 0.2 else "low"
+            print(
+                f"  Turn {step['turn']}: {step['tool']}({step['source_id']}) "
+                f"-> {step['row_count']} results, confidence={step['confidence']} [{status}]"
+                + (f" (retried {step['attempts']}x)" if step["attempts"] > 1 else "")
+            )
+        print()
 
 
 def setup_data():

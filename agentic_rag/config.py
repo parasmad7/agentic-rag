@@ -10,6 +10,14 @@ CHROMA_DIR = DATA_DIR / "chromadb"
 PDF_DIR = BASE_DIR / "agentic_rag" / "sample_data" / "pdfs"
 CATALOG_PATH = BASE_DIR / "agentic_rag" / "catalog" / "catalog.yaml"
 
+IMAGE_DIR = DATA_DIR / "images"
+IMAGE_DIR.mkdir(exist_ok=True)
+IMAGE_DESCRIPTION_CACHE_DIR = DATA_DIR / "image_descriptions"
+IMAGE_DESCRIPTION_CACHE_DIR.mkdir(exist_ok=True)
+IMAGE_COLLECTION = "pdf_images"
+CLIP_MODEL_NAME = "ViT-B-32"
+CLIP_PRETRAINED = "laion2b_s34b_b79k"
+
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB_NAME = "agentic_rag"
 

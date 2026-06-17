@@ -260,6 +260,9 @@ def ingest_pdfs():
     print(f"  Section summaries: {sum(1 for m in all_metadatas if m['level'] == 'section')}")
     print(f"  Chunks: {sum(1 for m in all_metadatas if m['level'] == 'chunk')}")
 
+    from agentic_rag.ingestion.image_pipeline import ingest_images
+    ingest_images()
+
 
 if __name__ == "__main__":
     ingest_pdfs()

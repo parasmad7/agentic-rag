@@ -1,10 +1,17 @@
 """Generate sample PDF documents for the health & fitness RAG system."""
 
+import io
+import tempfile
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import (
+    Image as RLImage,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -13,6 +20,17 @@ from reportlab.platypus import (
 )
 
 from agentic_rag.config import PDF_DIR
+
+
+def _make_chart_image(fig, width=5 * inch, height=3 * inch):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    tmp.write(buf.read())
+    tmp.flush()
+    return RLImage(tmp.name, width=width, height=height)
 
 
 def _heading(text: str, styles) -> Paragraph:
@@ -161,6 +179,22 @@ def generate_q1_report():
     story.append(t)
     story.append(_spacer())
 
+    fig, ax = plt.subplots(figsize=(6, 3.5))
+    plans = ["Elite", "Premium", "Basic"]
+    q4 = [38, 98, 140]
+    q1 = [45, 112, 155]
+    x = range(len(plans))
+    ax.bar([i - 0.15 for i in x], q4, 0.3, label="Q4 2024", color="#5DADE2")
+    ax.bar([i + 0.15 for i in x], q1, 0.3, label="Q1 2025", color="#1A5276")
+    ax.set_ylabel("Members")
+    ax.set_title("Membership Growth by Plan Type")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(plans)
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+    story.append(_make_chart_image(fig))
+    story.append(_spacer())
+
     story.append(_body(
         "The January new-year surge brought 28 new sign-ups, though 4 cancelled before the end of Q1 "
         "(85.7% new member retention). Elite memberships saw the highest growth driven by the new personal "
@@ -188,6 +222,15 @@ def generate_q1_report():
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
     ]))
     story.append(t2)
+    story.append(_spacer())
+
+    fig2, ax2 = plt.subplots(figsize=(5, 4))
+    categories = ["HIIT", "Yoga", "Cardio\n(Spin)", "Strength", "Pilates"]
+    visits = [920, 680, 540, 380, 320]
+    colors_pie = ["#E74C3C", "#3498DB", "#2ECC71", "#F39C12", "#9B59B6"]
+    ax2.pie(visits, labels=categories, autopct="%1.0f%%", colors=colors_pie, startangle=90)
+    ax2.set_title("Q1 2025 Class Visits by Category")
+    story.append(_make_chart_image(fig2, width=4 * inch, height=3.5 * inch))
     story.append(_spacer())
 
     story.append(_body(

@@ -13,9 +13,18 @@ import {
   Brain,
   MessageSquare,
   Check,
+  ImageIcon,
+  X,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────
+
+interface ImageRef {
+  url: string;
+  source: string;
+  description: string;
+  relevance_score: number;
+}
 
 interface Source {
   source: string;
@@ -38,6 +47,7 @@ interface AgentResult {
   row_count: number;
   summary: string;
   attempts: number;
+  images?: ImageRef[];
 }
 
 interface AgentStep {
@@ -64,6 +74,7 @@ interface StreamingState {
   tokens: string;
   meta: AgentMeta | null;
   done: boolean;
+  images: ImageRef[];
 }
 
 interface Message {
@@ -325,6 +336,73 @@ function SourceCard({ source }: { source: Source }) {
   );
 }
 
+function ImageGallery({ images }: { images: ImageRef[] }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  if (images.length === 0) return null;
+
+  return (
+    <>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 animate-fade-in-up">
+        {images.map((img, i) => (
+          <button
+            key={i}
+            onClick={() => setExpanded(img.url)}
+            className="group relative rounded-lg border border-gray-700/50 bg-gray-800/60 overflow-hidden hover:border-violet-500/40 transition-all"
+          >
+            <img
+              src={img.url}
+              alt={img.description.slice(0, 80)}
+              className="w-full h-32 object-contain bg-gray-900 p-1"
+              loading="lazy"
+            />
+            <div className="px-2 py-1.5 space-y-0.5">
+              <div className="flex items-center gap-1.5">
+                <ImageIcon className="w-3 h-3 text-amber-400 flex-shrink-0" />
+                <span className="text-[10px] text-gray-400 truncate">
+                  {img.source}
+                </span>
+                <span className="ml-auto text-[10px] text-gray-500 tabular-nums">
+                  {Math.round(img.relevance_score * 100)}%
+                </span>
+              </div>
+              <p className="text-[10px] text-gray-500 line-clamp-2 text-left leading-snug">
+                {img.description.slice(0, 120)}
+              </p>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {expanded && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-8"
+          onClick={() => setExpanded(null)}
+        >
+          <div className="relative max-w-3xl max-h-[80vh]" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setExpanded(null)}
+              className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-gray-800 border border-gray-600 flex items-center justify-center hover:bg-gray-700 transition-colors z-10"
+            >
+              <X className="w-4 h-4 text-gray-300" />
+            </button>
+            <img
+              src={expanded}
+              alt="Expanded view"
+              className="max-w-full max-h-[80vh] rounded-lg object-contain"
+            />
+            {images.find((img) => img.url === expanded) && (
+              <p className="mt-2 text-xs text-gray-400 max-w-lg">
+                {images.find((img) => img.url === expanded)!.description}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function AssistantMessage({ message }: { message: Message }) {
   const [showTrace, setShowTrace] = useState(false);
   const result = message.result;
@@ -342,6 +420,7 @@ function AssistantMessage({ message }: { message: Message }) {
     : streaming?.meta?.sources_consulted ?? [];
 
   const steps = result?.agent_trace ?? streaming?.steps ?? [];
+  const images = streaming?.images ?? [];
 
   return (
     <div className="animate-fade-in-up">
@@ -367,6 +446,9 @@ function AssistantMessage({ message }: { message: Message }) {
               ))}
             </div>
           )}
+
+          {/* Image gallery */}
+          {images.length > 0 && <ImageGallery images={images} />}
 
           {/* Answer text (streaming or final) */}
           {content && (
@@ -510,6 +592,7 @@ export default function App() {
       tokens: "",
       meta: null,
       done: false,
+      images: [],
     };
 
     const assistantMsg: Message = {
@@ -592,7 +675,10 @@ export default function App() {
                     result: agentResult,
                   };
                 }
-                state = { ...state, steps: updatedSteps };
+                const newImages = agentResult.images
+                  ? [...state.images, ...agentResult.images]
+                  : state.images;
+                state = { ...state, steps: updatedSteps, images: newImages };
                 break;
               }
               case "token":

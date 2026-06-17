@@ -13,6 +13,14 @@ class CatalogEntry(BaseModel):
     sample_questions: list[str]
 
 
+class ImageReference(BaseModel):
+    image_path: str
+    source: str
+    page_num: int
+    description: str
+    relevance_score: float
+
+
 class MetaResponse(BaseModel):
     source: str
     source_type: str
@@ -21,6 +29,7 @@ class MetaResponse(BaseModel):
     summary: str
     data: list[dict] | None = None
     row_count: int = 0
+    images: list[ImageReference] | None = None
 
 
 class GraphEdge(BaseModel):

@@ -3,11 +3,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agentic_rag.agents.orchestrator import run_query, run_query_stream
+from agentic_rag.config import IMAGE_DIR
 
 app = FastAPI(title="Agentic RAG API")
+
+app.mount("/api/images", StaticFiles(directory=str(IMAGE_DIR)), name="images")
 
 app.add_middleware(
     CORSMiddleware,

@@ -48,12 +48,12 @@ sources:
     source_type: sql
     domain: training
     name: classes
-    description: "Group fitness classes with name, assigned trainer, schedule day/time, capacity, current enrollment, and category"
+    description: "Current group fitness class schedule (not historical — no date column). Has name, assigned trainer, schedule day/time, capacity, current enrollment, and category. For historical class stats or trends by quarter, use the quarterly report PDF instead."
     key_fields: [name, trainer_id, schedule_day, time_slot, max_capacity, current_enrollment, category]
     sample_questions:
       - "Which classes are at full capacity?"
       - "What classes does Derek Washington teach?"
-      - "Show all HIIT classes and their schedules"
+      - "Show all HIIT classes and their current schedules"
 
   - id: sql_body_metrics
     source_type: sql
@@ -116,11 +116,11 @@ sources:
     source_type: pdf
     domain: wellness
     name: q1_2025_fitness_report.pdf
-    description: "Q1 2025 quarterly fitness center report with membership growth, class attendance, trainer performance ratings, member health outcomes, and key risks"
-    key_fields: [membership_growth, class_attendance, trainer_performance, health_outcomes, risks]
+    description: "Q1 2025 quarterly fitness center report with membership growth by plan type, class attendance breakdown by category (HIIT, Yoga, Cardio, Strength, Pilates), trainer performance ratings, member health outcomes, and key risks. Use this for any Q1-specific or time-period questions about classes, membership, or performance."
+    key_fields: [membership_growth, class_attendance_by_category, trainer_performance, health_outcomes, risks]
     sample_questions:
       - "How did membership grow in Q1 2025?"
-      - "Which trainer has the lowest rating?"
+      - "What percentage of classes are HIIT in Q1?"
       - "What are the key risks identified in Q1?"
 
   - id: pdf_nutrition_guide

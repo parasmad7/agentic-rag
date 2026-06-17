@@ -212,14 +212,25 @@ def _execute_function_call(
     all_results.append(res)
 
     if callback:
-        callback("agent_result", {
+        payload = {
             "source": res.response.source,
             "type": res.response.source_type,
             "confidence": res.response.confidence,
             "row_count": res.response.row_count,
             "summary": res.response.summary[:300],
             "attempts": res.attempts,
-        })
+        }
+        if res.response.images:
+            payload["images"] = [
+                {
+                    "url": f"/api/images/{img.image_path}",
+                    "source": img.source,
+                    "description": img.description,
+                    "relevance_score": img.relevance_score,
+                }
+                for img in res.response.images
+            ]
+        callback("agent_result", payload)
 
     if verbose:
         print(
@@ -232,7 +243,7 @@ def _execute_function_call(
         "source_type": res.response.source_type,
         "confidence": res.response.confidence,
         "row_count": res.response.row_count,
-        "summary": res.response.summary[:2000],
+        "summary": res.response.summary[:5000],
         "attempts": res.attempts,
         "error": res.error,
     }
@@ -297,16 +308,26 @@ def _run_agent_impl(
     else:
         answer = f"Reached maximum turns ({MAX_TURNS}) without a final answer."
 
-    sources_consulted = [
-        {
+    sources_consulted = []
+    for r in all_results:
+        entry = {
             "source": r.response.source,
             "type": r.response.source_type,
             "confidence": r.response.confidence,
             "summary": r.response.summary[:300],
             "row_count": r.response.row_count,
         }
-        for r in all_results
-    ]
+        if r.response.images:
+            entry["images"] = [
+                {
+                    "url": f"/api/images/{img.image_path}",
+                    "source": img.source,
+                    "description": img.description,
+                    "relevance_score": img.relevance_score,
+                }
+                for img in r.response.images
+            ]
+        sources_consulted.append(entry)
 
     return OrchestratorResult(
         question=question,
@@ -343,15 +364,17 @@ def run_agent_stream(question: str) -> Generator[str, None, None]:
             for i in range(0, len(final_res.answer), chunk_size):
                 callback("token", {"text": final_res.answer[i:i + chunk_size]})
 
-            sources_consulted = [
-                {
+            sources_consulted = []
+            for r in final_res.sources_consulted:
+                entry = {
                     "source": r["source"],
                     "type": r["type"],
                     "confidence": r["confidence"],
                     "row_count": r["row_count"],
                 }
-                for r in final_res.sources_consulted
-            ]
+                if "images" in r:
+                    entry["images"] = r["images"]
+                sources_consulted.append(entry)
             q.put((
                 "done",
                 {

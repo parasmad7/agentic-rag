@@ -90,12 +90,14 @@ The orchestrator LLM decides which specialist to call, inspects results, and eit
 | **Orchestrator Agent** | Gemini function-calling reasoning loop (max 10 turns) — decides which specialists to call and when to stop |
 | **SQL Agent** | Generates SQL from table schemas, executes read-only, retries with error feedback |
 | **NoSQL Agent** | Generates MongoDB queries from collection schemas, retries with error feedback |
-| **PDF Agent** | Vector search over chunked PDFs with parent section context expansion |
-| **Catalog** | YAML metadata registry for 12 sources, embedded into ChromaDB for semantic search |
+| **PDF Agent** | Hybrid search (vector + BM25) over chunked PDFs with parent section context expansion |
+| **Image Pipeline** | CLIP-based image extraction from PDFs, embedding, and text-to-image search |
+| **Image Describer** | Gemini Vision on-demand image descriptions with disk caching |
+| **Catalog** | YAML metadata registry for 12 sources with temporal context, embedded into ChromaDB |
 | **Knowledge Graph** | NetworkX graph with structural, semantic, governance, and derived edges |
-| **PDF Pipeline** | Hierarchical chunking (document → section → chunk) with small-to-big retrieval |
-| **FastAPI Backend** | REST + SSE streaming API for the React frontend |
-| **React UI** | Real-time chat interface with pipeline stage visualization and source cards |
+| **PDF Pipeline** | pdfplumber text + table extraction, LLM summaries, hierarchical chunking, cross-page table merging |
+| **FastAPI Backend** | REST + SSE streaming API with static image serving |
+| **React UI** | Real-time chat interface with agent trace, source cards, and image gallery with lightbox |
 
 ## Data Sources
 
@@ -184,7 +186,8 @@ Open `http://localhost:5173`
 | "Which trainers have low ratings and why?" | SQL (trainers) + MongoDB (trainer_reviews) |
 | "What is the recommended protein intake for muscle building?" | PDF (nutrition_program_guide) |
 | "Are members following nutrition guidelines?" | MongoDB (nutrition_logs) + PDF (nutrition_program_guide) |
-| "What health risks have been identified?" | MongoDB (health_assessments) + PDF (gym_safety_guidelines) |
+| "What percentage of classes are HIIT in Q1 2025?" | PDF (q1_2025_fitness_report) + pie chart image |
+| "Show me the membership growth chart" | PDF (q1_2025_fitness_report) + bar chart image |
 
 ## Project Structure
 
@@ -204,11 +207,16 @@ agentic_rag/
 ├── knowledge_graph/
 │   └── graph.py             # NetworkX graph with 4 edge types
 ├── ingestion/
-│   └── pdf_pipeline.py      # Hierarchical chunking → ChromaDB
+│   ├── pdf_pipeline.py      # pdfplumber extraction, LLM summaries, hierarchical chunking → ChromaDB
+│   ├── image_pipeline.py    # PyMuPDF image extraction → CLIP embedding → ChromaDB
+│   └── clip_embedder.py     # OpenCLIP ViT-B-32 lazy-loaded singleton
 ├── tools/
 │   ├── sql_tool.py          # Text-to-SQL → execute → MetaResponse
 │   ├── nosql_tool.py        # MongoDB query gen → execute → MetaResponse
-│   └── pdf_tool.py          # Vector search + context expansion → MetaResponse
+│   ├── pdf_tool.py          # Hybrid search (vector + BM25) + context expansion → MetaResponse
+│   ├── bm25_search.py       # BM25Okapi keyword search with bigram tokenization
+│   ├── image_tool.py        # CLIP text-to-image search in ChromaDB
+│   └── image_describer.py   # Gemini Vision descriptions with disk caching
 └── agents/
     ├── orchestrator.py      # Entry point (delegates to orchestrator_agent)
     ├── orchestrator_agent.py # Gemini function-calling reasoning loop (vanilla, no framework)

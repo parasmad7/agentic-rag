@@ -1,15 +1,24 @@
-"""NoSQL specialist agent: generates and executes MongoDB queries with retry on failure."""
+"""NoSQL specialist agent: Gemini-controlled MongoDB query loop with result validation."""
 
 import json
 from datetime import datetime
 
+from google.genai.types import (
+    Content,
+    FunctionDeclaration,
+    GenerateContentConfig,
+    Part,
+    Tool,
+)
 from pymongo import MongoClient
 
 from agentic_rag.agents.base import BaseAgent
 from agentic_rag.agents.messages import SpecialistRequest, SpecialistResult
-from agentic_rag.config import MONGO_DB_NAME, MONGO_URI
-from agentic_rag.llm import generate
+from agentic_rag.config import GEMINI_MODEL, MONGO_DB_NAME, MONGO_URI
+from agentic_rag.llm import get_client
 from agentic_rag.models import MetaResponse
+
+MAX_TURNS = 5
 
 
 def _get_collection_schema(collection_name: str) -> str:
@@ -27,7 +36,6 @@ def _get_collection_schema(collection_name: str) -> str:
             if key == "_id":
                 continue
             full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
-            type_name = type(value).__name__
             if isinstance(value, dict):
                 fields.append(f"  {full_key}: object")
                 fields.extend(_describe_fields(value, full_key))
@@ -35,7 +43,7 @@ def _get_collection_schema(collection_name: str) -> str:
                 elem_type = type(value[0]).__name__
                 fields.append(f"  {full_key}: array[{elem_type}]")
             else:
-                fields.append(f"  {full_key}: {type_name}")
+                fields.append(f"  {full_key}: {type(value).__name__}")
         return fields
 
     field_list = _describe_fields(sample)
@@ -50,45 +58,8 @@ def _serialize(obj):
     return obj
 
 
-def _generate_mongo_query(question: str, schemas: str, error_context: str = "") -> str:
-    error_section = ""
-    if error_context:
-        error_section = f"""
-PREVIOUS ATTEMPT FAILED:
-{error_context}
-Generate a corrected query that avoids this error.
-
-"""
-
-    prompt = f"""You are a MongoDB expert. Given the following collection schemas and a user question,
-generate a MongoDB query as a JSON object.
-
-RULES:
-- Return ONLY a JSON object with these fields:
-  - "collection": the collection name to query
-  - "filter": the MongoDB filter document (use {{"$regex": "pattern", "$options": "i"}} for text search)
-  - "projection": fields to include (optional)
-  - "sort": sort specification (optional)
-  - "limit": max documents to return (default 20)
-- For date comparisons, use {{"$gte": "YYYY-MM-DD"}} format
-- Do NOT use $text or $search operators
-
-SCHEMAS:
-{schemas}
-{error_section}QUESTION: {question}
-
-JSON QUERY:"""
-
-    text = generate(prompt)
-    return text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-
-
-def _execute_mongo(collection_name: str, query_spec: dict) -> list[dict]:
-    filter_doc = query_spec.get("filter", {})
-    projection = query_spec.get("projection")
-    sort = query_spec.get("sort")
-    limit = query_spec.get("limit", 20)
-
+def _execute_mongo(collection_name: str, filter_doc: dict, projection: dict | None = None,
+                   sort: dict | None = None, limit: int = 20) -> list[dict]:
     mongo_client = MongoClient(MONGO_URI)
     db = mongo_client[MONGO_DB_NAME]
     cursor = db[collection_name].find(filter_doc, projection)
@@ -106,73 +77,145 @@ def _execute_mongo(collection_name: str, query_spec: dict) -> list[dict]:
     return docs
 
 
+def _build_tools() -> list[Tool]:
+    return [Tool(function_declarations=[
+        FunctionDeclaration(
+            name="execute_mongo",
+            description="Execute a MongoDB find query against a collection.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "filter": {
+                        "type": "object",
+                        "description": 'MongoDB filter document. Use {"$regex": "pattern", "$options": "i"} for text search. Use {"$gte": "YYYY-MM-DD"} for date comparisons. Do NOT use $text or $search.',
+                    },
+                    "projection": {
+                        "type": "object",
+                        "description": "Fields to include/exclude (optional). Example: {\"name\": 1, \"rating\": 1}",
+                    },
+                    "sort": {
+                        "type": "object",
+                        "description": "Sort specification (optional). Example: {\"rating\": -1} for descending.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max documents to return. Default 20.",
+                    },
+                },
+                "required": ["filter"],
+            },
+        ),
+    ])]
+
+
+def _build_system_prompt(schema: str, collection_name: str) -> str:
+    return f"""You are a MongoDB expert. Generate and execute queries to answer the user's question.
+
+COLLECTION: {collection_name}
+SCHEMA:
+{schema}
+
+RULES:
+- Use {{"$regex": "pattern", "$options": "i"}} for text search — do NOT use $text or $search
+- Use {{"$gte": "YYYY-MM-DD"}} for date comparisons
+- After seeing query results, evaluate whether they fully answer the question
+- If results are empty, try a broader filter (e.g., remove restrictive conditions, use regex instead of exact match)
+- You may run multiple queries to build a complete answer
+- When you have enough data, provide a clear summary that includes all specific names, numbers, and values from the results"""
+
+
 class NoSQLAgent(BaseAgent[SpecialistRequest, SpecialistResult]):
     name = "nosql_agent"
 
     def run(self, req: SpecialistRequest) -> SpecialistResult:
-        collection_names = [req.source_name]
-        schema = _get_collection_schema(req.source_name)
+        collection_name = req.source_name
+        schema = _get_collection_schema(collection_name)
+        client = get_client()
+        tools = _build_tools()
+        system_prompt = _build_system_prompt(schema, collection_name)
 
+        history: list[Content] = [
+            Content(role="user", parts=[Part.from_text(text=req.question)]),
+        ]
+        all_docs: list[dict] = []
+        all_queries: list[str] = []
+        attempts = 0
         last_error = None
-        for attempt in range(1, req.max_retries + 2):
-            error_ctx = ""
-            if last_error:
-                error_ctx = last_error[:500]
 
-            query_text = _generate_mongo_query(req.question, schema, error_ctx)
+        for turn in range(1, MAX_TURNS + 1):
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=history,
+                config=GenerateContentConfig(
+                    tools=tools,
+                    system_instruction=system_prompt,
+                ),
+            )
 
-            try:
-                query_spec = json.loads(query_text)
-            except json.JSONDecodeError:
-                last_error = f"Query: {query_text}\nError: Invalid JSON"
-                if attempt >= req.max_retries + 1:
-                    return SpecialistResult(
-                        source_id=req.source_id,
-                        response=MetaResponse(
-                            source=", ".join(collection_names),
-                            source_type="nosql",
-                            query_used=query_text,
-                            confidence=0.1,
-                            summary=f"Failed to parse MongoDB query after {attempt} attempts.",
-                            data=[],
-                            row_count=0,
-                        ),
-                        attempts=attempt,
-                        error="Invalid JSON",
-                    )
-                continue
+            candidate = response.candidates[0]
+            history.append(candidate.content)
 
-            collection_name = query_spec.get("collection", req.source_name)
+            function_calls = [
+                p for p in candidate.content.parts if p.function_call is not None
+            ]
 
-            try:
-                docs = _execute_mongo(collection_name, query_spec)
+            if not function_calls:
+                summary = response.text.strip() if response.text else json.dumps(all_docs[:10], default=str)
                 return SpecialistResult(
                     source_id=req.source_id,
                     response=MetaResponse(
                         source=collection_name,
                         source_type="nosql",
-                        query_used=query_text,
-                        confidence=0.9 if docs else 0.3,
-                        summary=json.dumps(docs[:10], default=str),
-                        data=docs[:20],
-                        row_count=len(docs),
+                        query_used="; ".join(all_queries),
+                        confidence=0.9 if all_docs else 0.3,
+                        summary=summary,
+                        data=all_docs[:20],
+                        row_count=len(all_docs),
                     ),
-                    attempts=attempt,
+                    attempts=attempts,
                 )
-            except Exception as e:
-                last_error = f"Query: {query_text}\nError: {e}"
-                if attempt >= req.max_retries + 1:
-                    return SpecialistResult(
-                        source_id=req.source_id,
-                        response=MetaResponse(
-                            source=collection_name,
-                            source_type="nosql",
-                            query_used=query_text,
-                            confidence=0.1,
-                            summary=f"All {attempt} attempts failed: {e}",
-                            data=[],
-                            row_count=0,
-                        ),
-                        attempts=attempt,
-                        error=str(e),
+
+            function_response_parts = []
+            for fc_part in function_calls:
+                fc = fc_part.function_call
+                args = dict(fc.args)
+                filter_doc = args.get("filter", {})
+                attempts += 1
+                query_desc = json.dumps({"filter": filter_doc}, default=str)
+
+                try:
+                    docs = _execute_mongo(
+                        collection_name,
+                        filter_doc,
+                        projection=args.get("projection"),
+                        sort=args.get("sort"),
+                        limit=int(args.get("limit", 20)),
                     )
+                    all_docs.extend(docs)
+                    all_queries.append(query_desc)
+                    result = {"documents": docs[:10], "total_count": len(docs)}
+                except Exception as e:
+                    last_error = str(e)
+                    result = {"error": f"Query failed: {e}"}
+
+                function_response_parts.append(
+                    Part.from_function_response(name="execute_mongo", response=result)
+                )
+
+            history.append(Content(role="user", parts=function_response_parts))
+
+        summary = json.dumps(all_docs[:10], default=str) if all_docs else f"Max turns reached. Last error: {last_error}"
+        return SpecialistResult(
+            source_id=req.source_id,
+            response=MetaResponse(
+                source=collection_name,
+                source_type="nosql",
+                query_used="; ".join(all_queries),
+                confidence=0.5 if all_docs else 0.1,
+                summary=summary,
+                data=all_docs[:20],
+                row_count=len(all_docs),
+            ),
+            attempts=attempts,
+            error=last_error,
+        )

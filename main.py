@@ -2,7 +2,7 @@
 
 import sys
 
-from agentic_rag.agents.orchestrator import run_query
+from agentic_rag.agents.orchestrator import run_query, run_query_logged
 
 
 def print_result(result: dict):
@@ -53,6 +53,11 @@ def setup_data():
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--setup":
         setup_data()
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--log":
+        question = " ".join(sys.argv[2:])
+        run_query_logged(question)
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "--query":

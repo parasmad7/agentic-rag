@@ -1,6 +1,7 @@
-"""PDF search tool: hybrid retrieval (vector + BM25) with small-to-big expansion."""
+"""PDF search tool: hybrid retrieval (vector + BM25) with cross-encoder reranking."""
 
 import chromadb
+from sentence_transformers import CrossEncoder
 
 from agentic_rag.config import CHROMA_DIR
 from agentic_rag.ingestion.pdf_pipeline import PDF_COLLECTION
@@ -11,6 +12,28 @@ from agentic_rag.tools.image_tool import search_images
 
 VECTOR_WEIGHT = 0.8
 BM25_WEIGHT = 0.2
+RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+_reranker: CrossEncoder | None = None
+
+
+def _get_reranker() -> CrossEncoder:
+    global _reranker
+    if _reranker is None:
+        _reranker = CrossEncoder(RERANKER_MODEL)
+    return _reranker
+
+
+def _rerank(query: str, hits: list[dict], top_k: int = 5) -> list[dict]:
+    if not hits:
+        return []
+    reranker = _get_reranker()
+    pairs = [(query, h["document"]) for h in hits]
+    scores = reranker.predict(pairs)
+    for i, hit in enumerate(hits):
+        hit["rerank_score"] = float(scores[i])
+    hits.sort(key=lambda h: h["rerank_score"], reverse=True)
+    return hits[:top_k]
 
 
 def _search_vector(
@@ -87,14 +110,16 @@ def _hybrid_search(
                 "distance": 1.0,
             }
 
-    ranked = sorted(fused.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    ranked = sorted(fused.items(), key=lambda x: x[1], reverse=True)[:top_k * 2]
 
-    results = []
+    candidates = []
     for doc_id, score in ranked:
         hit = hit_map[doc_id]
         hit["hybrid_score"] = score
-        results.append(hit)
-    return results
+        candidates.append(hit)
+
+    reranked = _rerank(query, candidates, top_k=top_k)
+    return reranked
 
 
 def _expand_context(hits: list[dict]) -> str:
@@ -227,13 +252,14 @@ def search_pdfs(question: str, source_filter: list[str] | None = None) -> MetaRe
     expanded_context = _expand_context(hits)
     sources_found = list({h["metadata"]["source"] for h in hits})
 
-    max_rrf = hits[0]["hybrid_score"] if hits else 1.0
+    best_rerank = hits[0].get("rerank_score", 1.0) if hits else 1.0
     chunk_data = [
         {
             "type": "text",
             "source": h["metadata"]["source"],
             "section": h["metadata"]["section"],
-            "relevance_score": round(h["hybrid_score"] / max_rrf, 3),
+            "rerank_score": round(h.get("rerank_score", 0), 4),
+            "hybrid_score": round(h.get("hybrid_score", 0), 4),
             "excerpt": h["document"][:200] + "...",
         }
         for h in hits
@@ -254,13 +280,14 @@ def search_pdfs(question: str, source_filter: list[str] | None = None) -> MetaRe
         })
 
     sources_found = list(dict.fromkeys(sources_found))
-    avg_relevance = sum(h["hybrid_score"] for h in hits) / (len(hits) * max_rrf)
+    avg_rerank = sum(h.get("rerank_score", 0) for h in hits) / len(hits) if hits else 0
+    confidence = round(min(max(avg_rerank, 0.1), 1.0), 2)
 
     return MetaResponse(
         source=", ".join(sources_found),
         source_type="pdf",
         query_used=question,
-        confidence=round(min(avg_relevance + 0.2, 1.0), 2),
+        confidence=confidence,
         summary=expanded_context,
         data=chunk_data,
         row_count=len(hits),

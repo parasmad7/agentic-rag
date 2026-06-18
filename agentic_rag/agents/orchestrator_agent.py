@@ -3,6 +3,8 @@
 import json
 import queue
 import threading
+import time
+from pathlib import Path
 from typing import Any, Generator
 
 from google.genai.types import (
@@ -10,6 +12,7 @@ from google.genai.types import (
     FunctionDeclaration,
     GenerateContentConfig,
     Part,
+    ThinkingConfig,
     Tool,
 )
 
@@ -22,6 +25,7 @@ from agentic_rag.agents.nosql_agent import NoSQLAgent
 from agentic_rag.agents.pdf_agent import PDFAgent
 from agentic_rag.agents.sql_agent import SQLAgent
 from agentic_rag.catalog.catalog_search import load_catalog
+from agentic_rag.knowledge_graph.graph import build_graph, expand_sources
 from agentic_rag.llm import get_client
 from agentic_rag.config import GEMINI_MODEL
 
@@ -123,6 +127,30 @@ def _build_tools() -> list[Tool]:
                 "required": ["question", "pdf_name"],
             },
         ),
+        FunctionDeclaration(
+            name="get_related_sources",
+            description=(
+                "Use the knowledge graph to discover data sources related to "
+                "ones you have already queried. Returns connected sources with "
+                "relationship descriptions (e.g., structural joins, semantic "
+                "links, governance rules). Call this when you suspect there may "
+                "be useful information in sources you haven't queried yet."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "source_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Names of sources already queried — e.g., "
+                            "'trainers', 'nutrition_logs', 'gym_safety_guidelines.pdf'"
+                        ),
+                    },
+                },
+                "required": ["source_names"],
+            },
+        ),
     ])]
 
 
@@ -147,18 +175,58 @@ AVAILABLE DATA SOURCES:
 {catalog_context}
 
 STRATEGY:
-- Think about what information you need before making any queries
+- ALWAYS query data sources first before drawing any conclusions. Never say "I can't" without trying.
+- Break complex questions into focused sub-questions and query each data source separately
 - Use focused, specific questions when calling tools — not the raw user question
 - If a query returns results that inform your next step, use those results to formulate a better follow-up query
 - You can call multiple tools if needed — use results from one to refine queries to another
+- Cross-reference data across sources: e.g., get names from SQL, then look up those names in MongoDB
+- Use get_related_sources to discover connected data sources via the knowledge graph when you need to find related information across different source types
 - When you have enough information, provide a comprehensive answer citing your sources
 
 RULES:
 - If the question is unrelated to the available fitness center data sources, politely explain that you can only answer questions about the fitness center's data. Do not call any tools for off-topic questions.
+- For all on-topic questions, you MUST call at least one tool before answering. Gather real data first, then analyze.
 - Always cite which source each piece of information comes from
 - If sources conflict, note the discrepancy
 - If you're uncertain, mention the uncertainty
 - Be specific with numbers and details from the data"""
+
+
+_kg_graph = None
+
+
+def _get_kg_graph():
+    global _kg_graph
+    if _kg_graph is None:
+        _kg_graph = build_graph()
+    return _kg_graph
+
+
+def _execute_kg_expansion(source_names: list[str], verbose: bool) -> dict:
+    graph = _get_kg_graph()
+    source_ids = [_SOURCE_ID_MAP.get(n, n) for n in source_names]
+    expanded = expand_sources(graph, source_ids, max_hops=1)
+
+    related = []
+    for node in expanded:
+        if node["directly_selected"]:
+            continue
+        edges_desc = [
+            f"{e['edge_type']}: {e['description']}"
+            for e in node.get("edges", [])
+        ]
+        related.append({
+            "source": node["name"],
+            "type": node["source_type"],
+            "domain": node.get("domain", ""),
+            "description": node.get("description", ""),
+            "relationships": edges_desc,
+        })
+
+    if verbose:
+        print(f"    -> KG expanded to {len(related)} related sources")
+    return {"related_sources": related}
 
 
 def _execute_function_call(
@@ -169,6 +237,21 @@ def _execute_function_call(
         callback("agent_call", {"tool": name, "args": args, "turn": current_turn})
     if verbose:
         print(f"  [Orchestrator] Calling {name}({args})...")
+
+    if name == "get_related_sources":
+        source_names = args.get("source_names", [])
+        result = _execute_kg_expansion(source_names, verbose)
+        agent_trace.append({
+            "turn": current_turn,
+            "tool": name,
+            "args": args,
+            "source_id": "knowledge_graph",
+            "confidence": 1.0,
+            "row_count": len(result["related_sources"]),
+            "attempts": 1,
+            "error": None,
+        })
+        return result
 
     if name == "query_sql":
         agent = SQLAgent()
@@ -290,19 +373,33 @@ def _run_agent_impl(
             answer = response.text.strip() if response.text else ""
             break
 
-        function_response_parts = []
-        for fc_part in function_calls:
-            fc = fc_part.function_call
+        if len(function_calls) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _run_fc(fc_part):
+                fc = fc_part.function_call
+                return fc.name, _execute_function_call(
+                    fc.name, dict(fc.args), agent_trace, all_results,
+                    turn, callback, verbose,
+                )
+
+            with ThreadPoolExecutor(max_workers=len(function_calls)) as pool:
+                futures = [pool.submit(_run_fc, fc_part) for fc_part in function_calls]
+                ordered_results = [f.result() for f in futures]
+
+            function_response_parts = [
+                Part.from_function_response(name=name, response=result)
+                for name, result in ordered_results
+            ]
+        else:
+            fc = function_calls[0].function_call
             result = _execute_function_call(
                 fc.name, dict(fc.args), agent_trace, all_results,
                 turn, callback, verbose,
             )
-            function_response_parts.append(
-                Part.from_function_response(
-                    name=fc.name,
-                    response=result,
-                )
-            )
+            function_response_parts = [
+                Part.from_function_response(name=fc.name, response=result)
+            ]
 
         history.append(Content(role="user", parts=function_response_parts))
     else:
@@ -339,6 +436,213 @@ def _run_agent_impl(
 
 def run_agent(question: str, verbose: bool = False) -> OrchestratorResult:
     return _run_agent_impl(question, verbose=verbose)
+
+
+def run_agent_with_logs(
+    question: str, log_dir: str = "logs",
+) -> OrchestratorResult:
+    """Run the orchestrator with detailed per-turn logging to a JSON file."""
+    from agentic_rag.config import BASE_DIR
+
+    log_path = Path(BASE_DIR) / log_dir
+    log_path.mkdir(parents=True, exist_ok=True)
+
+    client = get_client()
+    all_results: list[SpecialistResult] = []
+    agent_trace: list[dict] = []
+    turn_logs: list[dict] = []
+    total_start = time.time()
+
+    system_prompt = _build_system_prompt()
+    tools = _build_tools()
+
+    history: list[Content] = [
+        Content(role="user", parts=[Part.from_text(text=question)]),
+    ]
+
+    print(f"\n{'='*80}")
+    print(f"QUERY: {question}")
+    print(f"{'='*80}\n")
+
+    answer = ""
+    for turn in range(1, MAX_TURNS + 1):
+        turn_start = time.time()
+        print(f"--- Turn {turn} ---")
+
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=history,
+            config=GenerateContentConfig(
+                tools=tools,
+                system_instruction=system_prompt,
+                thinking_config=ThinkingConfig(
+                    thinking_budget=2048,
+                    include_thoughts=True,
+                ),
+            ),
+        )
+        llm_elapsed = time.time() - turn_start
+
+        candidate = response.candidates[0]
+        history.append(candidate.content)
+
+        thought_parts = [
+            p.text for p in candidate.content.parts
+            if p.thought and p.text
+        ]
+        text_parts = [
+            p.text for p in candidate.content.parts
+            if p.text and not p.thought
+        ]
+        function_calls = [
+            p for p in candidate.content.parts
+            if p.function_call is not None
+        ]
+
+        turn_log: dict[str, Any] = {
+            "turn": turn,
+            "llm_latency_s": round(llm_elapsed, 2),
+            "thinking": "\n".join(thought_parts) if thought_parts else None,
+            "output_text": "\n".join(text_parts) if text_parts else None,
+            "function_calls": [],
+            "is_final": len(function_calls) == 0,
+        }
+
+        if thought_parts:
+            print(f"  Thinking ({llm_elapsed:.1f}s):")
+            for t in thought_parts:
+                for line in t.strip().split("\n")[:10]:
+                    print(f"    {line}")
+            if len(thought_parts[0].split("\n")) > 10:
+                print(f"    ... ({len(thought_parts[0])} chars total)")
+
+        if text_parts:
+            print(f"  LLM reasoning ({llm_elapsed:.1f}s):")
+            for t in text_parts:
+                for line in t.strip().split("\n"):
+                    print(f"    {line}")
+
+        if not function_calls:
+            answer = response.text.strip() if response.text else ""
+            turn_log["final_answer_length"] = len(answer)
+            turn_logs.append(turn_log)
+            print(f"  -> Final answer ({len(answer)} chars)")
+            break
+
+        def _run_and_log(fc_part):
+            fc = fc_part.function_call
+            fc_args = dict(fc.args)
+            print(f"  -> Calling {fc.name}({json.dumps(fc_args)})")
+
+            tool_start = time.time()
+            result = _execute_function_call(
+                fc.name, fc_args, agent_trace, all_results,
+                turn, None, True,
+            )
+            tool_elapsed = time.time() - tool_start
+
+            fc_log = {
+                "tool": fc.name,
+                "args": fc_args,
+                "tool_latency_s": round(tool_elapsed, 2),
+                "result_source": result.get("source"),
+                "result_confidence": result.get("confidence"),
+                "result_row_count": result.get("row_count"),
+                "result_attempts": result.get("attempts"),
+                "result_error": result.get("error"),
+                "result_summary": result.get("summary", "")[:500],
+            }
+
+            print(f"      source={result.get('source')}, "
+                  f"confidence={result.get('confidence')}, "
+                  f"rows={result.get('row_count')}, "
+                  f"time={tool_elapsed:.1f}s")
+            if result.get("error"):
+                print(f"      ERROR: {result['error']}")
+
+            return fc.name, result, fc_log
+
+        if len(function_calls) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=len(function_calls)) as pool:
+                futures = [pool.submit(_run_and_log, fc_part) for fc_part in function_calls]
+                ordered_results = [f.result() for f in futures]
+
+            function_response_parts = []
+            for name, result, fc_log in ordered_results:
+                turn_log["function_calls"].append(fc_log)
+                function_response_parts.append(
+                    Part.from_function_response(name=name, response=result)
+                )
+        else:
+            name, result, fc_log = _run_and_log(function_calls[0])
+            turn_log["function_calls"].append(fc_log)
+            function_response_parts = [
+                Part.from_function_response(name=name, response=result)
+            ]
+
+        turn_logs.append(turn_log)
+        history.append(Content(role="user", parts=function_response_parts))
+    else:
+        answer = f"Reached maximum turns ({MAX_TURNS}) without a final answer."
+
+    total_elapsed = time.time() - total_start
+
+    sources_consulted = []
+    for r in all_results:
+        entry = {
+            "source": r.response.source,
+            "type": r.response.source_type,
+            "confidence": r.response.confidence,
+            "summary": r.response.summary[:300],
+            "row_count": r.response.row_count,
+        }
+        if r.response.images:
+            entry["images"] = [
+                {
+                    "url": f"/api/images/{img.image_path}",
+                    "source": img.source,
+                    "description": img.description,
+                    "relevance_score": img.relevance_score,
+                }
+                for img in r.response.images
+            ]
+        sources_consulted.append(entry)
+
+    orchestrator_result = OrchestratorResult(
+        question=question,
+        answer=answer,
+        sources_consulted=sources_consulted,
+        agent_trace=agent_trace,
+    )
+
+    # Write detailed log file
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    slug = question[:50].lower().replace(" ", "_").replace("?", "")
+    log_file = log_path / f"{timestamp}_{slug}.json"
+    log_data = {
+        "question": question,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "total_latency_s": round(total_elapsed, 2),
+        "total_turns": len(turn_logs),
+        "total_tool_calls": sum(len(t["function_calls"]) for t in turn_logs),
+        "answer": answer,
+        "turns": turn_logs,
+        "agent_trace": agent_trace,
+        "sources_consulted": sources_consulted,
+    }
+    log_file.write_text(json.dumps(log_data, indent=2, default=str))
+
+    print(f"\n{'='*80}")
+    print(f"COMPLETE: {len(turn_logs)} turns, "
+          f"{sum(len(t['function_calls']) for t in turn_logs)} tool calls, "
+          f"{total_elapsed:.1f}s total")
+    print(f"Log saved: {log_file}")
+    print(f"{'='*80}\n")
+    print(f"ANSWER:\n{answer}\n")
+
+    return orchestrator_result
 
 
 def run_agent_stream(question: str) -> Generator[str, None, None]:

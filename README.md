@@ -1,114 +1,85 @@
-# Agentic RAG
+# Agentic RAG — Single Agent
 
-Multi-source RAG system that queries across SQL databases, NoSQL (MongoDB), and PDFs using agentic orchestration powered by Gemini. The project explores five different orchestration approaches — from a deterministic linear pipeline to fully agentic reasoning loops with vanilla Gemini function calling, CrewAI, Google ADK, and LangGraph.
+One orchestrator agent with a Gemini function-calling reasoning loop that queries across SQL, NoSQL, and PDF sources using three tool functions with code-controlled retry.
+
+## Branch Comparison
+
+| Branch | Framework | Style |
+|---|---|---|
+| [`linear-pipeline`](../../tree/linear-pipeline) | Gemini SDK direct | Fixed 6-stage pipeline, no agents |
+| **[`single-agent`](../../tree/single-agent)** | **Gemini function calling** | **1 agent + 3 tools with retry** |
+| [`main`](../../tree/main) | Gemini function calling | 4-agent reasoning loops + KG + cross-encoder |
+| [`crewai`](../../tree/crewai) | CrewAI | Agent/Crew/Task with tool delegation |
+| [`google-adk`](../../tree/google-adk) | Google ADK | Async agent with pre-turn hooks |
+| [`langgraph`](../../tree/langgraph) | LangGraph + Gemini | StateGraph with call_model ↔ execute_tools cycle |
 
 ## Architecture
 
-The system has five orchestration implementations, each on its own branch:
-
-### `linear-pipeline` — Deterministic Pipeline (No Agents)
-
 ```
-User Query
-    │
-    ▼
-┌─────────────────────┐
-│  Domain Classifier   │ ▶ narrows to relevant domains
-│     (Gemini)         │
-└─────────┬────────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Catalog Vector Search│ ▶ top-K candidates from ChromaDB
-└─────────┬────────────┘
-          │
-          ▼
-┌─────────────────────┐
-│   LLM Reranking     │ ▶ selects top-N most relevant
-│   + KG Expansion    │ ▶ knowledge graph adds related sources
-└─────────┬────────────┘
-          │
-          ▼  parallel fan-out
-    ┌─────┼─────────────┐
-    ▼     ▼             ▼
-  SQL   NoSQL         PDF
-  Tool  Tool         Search
-    │     │             │
-    ▼     ▼             ▼
-  MetaResponse × N
-          │
-          ▼
-┌─────────────────────┐
-│    Synthesizer       │ ▶ combines all MetaResponses
-│     (Gemini)         │
-└─────────────────────┘
-          │
-          ▼
-     Final Answer
+                        User Query
+                            │
+                            ▼
+┌───────────────────────────────────────────────────┐
+│              Orchestrator Agent                   │
+│        (Gemini reasoning loop, max 10 turns)      │
+│                                                   │
+│   Observe ──▶ Reason ──▶ Act ──▶ Observe ...      │
+│                    │                              │
+│         ┌─────────┼──────────┐                    │
+│         ▼         ▼          ▼                    │
+│   ┌──────────┐ ┌──────────┐ ┌──────────┐         │
+│   │ query_sql│ │query_    │ │search_   │         │
+│   │          │ │nosql     │ │pdfs      │         │
+│   │ generate │ │ generate │ │ hybrid   │         │
+│   │ SQL +    │ │ Mongo    │ │ search   │         │
+│   │ execute  │ │ query +  │ │ (vector  │         │
+│   │ (retry   │ │ execute  │ │ + BM25)  │         │
+│   │  ≤3x)    │ │ (retry   │ │ + CLIP   │         │
+│   │          │ │  ≤3x)    │ │ images   │         │
+│   └──────────┘ └──────────┘ └──────────┘         │
+│     code-        code-        no retry,           │
+│     controlled   controlled   deterministic       │
+│     retry        retry        retrieval            │
+└───────────────────────────────────────────────────┘
+                            │
+                            ▼
+                      Final Answer
+                   (with source citations
+                    and agent trace)
 ```
 
-The pipeline uses Gemini for classification, reranking, and synthesis, but the **control flow is hardcoded** — the programmer decides every step. No agents, no reasoning loop.
+The orchestrator is the **only LLM reasoning loop**. It decides which tools to call, inspects results, and either calls more tools or produces the final answer. The tools themselves are plain functions — SQL and NoSQL tools have code-controlled retry (re-generate the query on error, up to 3 attempts), but they do **not** run their own LLM reasoning loops.
 
-### `main` / `crewai` / `google-adk` / `langgraph` — Multi-Agent Architecture (4 Agents)
-
-```
-User Query
-    │
-    ▼
-┌───────────────────────────────────────┐
-│       Orchestrator Agent              │
-│  (Gemini reasoning loop, max 10 turns)│
-│                                       │
-│  Observe → Reason → Act → Observe ... │
-│                                       │
-│  Tools:                               │
-│  ┌───────────┐ ┌──────────┐ ┌──────┐ │
-│  │ SQL Agent │ │NoSQL Agent│ │PDF   │ │
-│  │ (retry +  │ │(retry +  │ │Agent │ │
-│  │  refine)  │ │ refine)  │ │      │ │
-│  └───────────┘ └──────────┘ └──────┘ │
-└───────────────────────────────────────┘
-          │
-          ▼
-     Final Answer (with agent trace)
-```
-
-The orchestrator LLM decides which specialist to call, inspects results, and either calls another specialist or produces the final answer. Each specialist agent has its own retry-with-error-feedback loop. The **LLM controls the flow** — it decides what to query, in what order, and when to stop.
-
-| Branch | Framework | Orchestration Style |
-|---|---|---|
-| `linear-pipeline` | Gemini SDK direct | Fixed 6-stage pipeline, parallel fan-out, no agents |
-| `main` | Gemini SDK function calling | 4-agent reasoning loop, no framework |
-| `crewai` | CrewAI | Agent/Crew/Task with tool delegation |
-| `google-adk` | Google ADK (Antigravity) | Async agent with pre-turn hooks |
-| `langgraph` | LangGraph + Gemini | StateGraph with call_model ↔ execute_tools cycle |
+**What this branch does NOT have** (compared to `main`):
+- No cross-encoder reranking of catalog candidates
+- No knowledge graph expansion tool
+- No multi-agent delegation — the orchestrator calls tools directly
 
 ## Key Components
 
-| Component | Description |
-|---|---|
-| **Orchestrator Agent** | Gemini function-calling reasoning loop (max 10 turns) — decides which specialists to call and when to stop |
-| **SQL Agent** | Generates SQL from table schemas, executes read-only, retries with error feedback |
-| **NoSQL Agent** | Generates MongoDB queries from collection schemas, retries with error feedback |
-| **PDF Agent** | Hybrid search (vector + BM25) over chunked PDFs with parent section context expansion |
-| **Image Pipeline** | CLIP-based image extraction from PDFs, embedding, and text-to-image search |
-| **Image Describer** | Gemini Vision on-demand image descriptions with disk caching |
-| **Catalog** | YAML metadata registry for 12 sources with temporal context, embedded into ChromaDB |
-| **Knowledge Graph** | NetworkX graph with structural, semantic, governance, and derived edges |
-| **PDF Pipeline** | pdfplumber text + table extraction, LLM summaries, hierarchical chunking, cross-page table merging |
-| **FastAPI Backend** | REST + SSE streaming API with static image serving |
-| **React UI** | Real-time chat interface with agent trace, source cards, and image gallery with lightbox |
+| Component | File | Description |
+|---|---|---|
+| Orchestrator Agent | `agents/orchestrator_agent.py` | Gemini function-calling loop (max 10 turns) with 3 tool declarations |
+| Orchestrator Entry | `agents/orchestrator.py` | Public API — `run_query()` and `run_query_stream()` |
+| SQL Tool | `agents/sql_agent.py` | Generates SQL from table schemas, executes read-only, retries with error feedback |
+| NoSQL Tool | `agents/nosql_agent.py` | Generates MongoDB queries from collection schemas, retries with error feedback |
+| PDF Tool | `agents/pdf_agent.py` → `tools/pdf_tool.py` | Hybrid search (vector + BM25) with small-to-big context expansion |
+| Image Pipeline | `ingestion/image_pipeline.py` | PyMuPDF image extraction from PDFs, CLIP embedding into ChromaDB |
+| Image Describer | `tools/image_describer.py` | Gemini Vision on-demand descriptions with disk caching |
+| BM25 Search | `tools/bm25_search.py` | BM25Okapi keyword search with bigram tokenization |
+| CLIP Embedder | `ingestion/clip_embedder.py` | OpenCLIP ViT-B-32 lazy-loaded singleton for image embeddings |
+| Catalog | `catalog/catalog_search.py` | YAML metadata registry for 12 sources, embedded into ChromaDB |
+| PDF Pipeline | `ingestion/pdf_pipeline.py` | pdfplumber text + table extraction, LLM summaries, hierarchical chunking |
+| FastAPI Backend | `api/app.py` | REST + SSE streaming API with static image serving |
+| React UI | `ui/src/App.tsx` | Real-time chat interface with agent trace, source cards, and image gallery |
 
 ## Data Sources
 
-### SQL (SQLite) — 6 tables
-`members`, `trainers`, `workout_sessions`, `memberships`, `classes`, `body_metrics`
+**SQL (SQLite) — 6 tables:** `members`, `trainers`, `workout_sessions`, `memberships`, `classes`, `body_metrics`
 
-### NoSQL (MongoDB) — 3 collections
-`nutrition_logs`, `trainer_reviews`, `health_assessments`
+**NoSQL (MongoDB) — 3 collections:** `nutrition_logs`, `trainer_reviews`, `health_assessments`
 
-### PDF — 3 documents
-`gym_safety_guidelines.pdf`, `q1_2025_fitness_report.pdf`, `nutrition_program_guide.pdf`
+**PDF — 3 documents:** `gym_safety_guidelines.pdf`, `q1_2025_fitness_report.pdf`, `nutrition_program_guide.pdf`
 
 ## Setup
 
@@ -146,11 +117,11 @@ uv run python main.py --setup
 ```
 
 This creates:
-- SQLite database with 6 tables (members, trainers, classes, etc.)
-- MongoDB collections (nutrition_logs, trainer_reviews, health_assessments)
-- 3 sample PDFs (gym safety guidelines, Q1 fitness report, nutrition program guide)
+- SQLite database with 6 tables
+- MongoDB collections with sample documents
+- 3 sample PDFs with charts and tables
 - ChromaDB vector indices for catalog and PDF chunks
-- Knowledge graph with cross-source edges
+- CLIP image embeddings for PDF figures
 
 ## Usage
 
@@ -178,23 +149,12 @@ cd ui && npm run dev
 
 Open `http://localhost:5173`
 
-### Example Queries
-
-| Query | Sources Hit |
-|---|---|
-| "How many active members are there?" | SQL (members, memberships) |
-| "Which trainers have low ratings and why?" | SQL (trainers) + MongoDB (trainer_reviews) |
-| "What is the recommended protein intake for muscle building?" | PDF (nutrition_program_guide) |
-| "Are members following nutrition guidelines?" | MongoDB (nutrition_logs) + PDF (nutrition_program_guide) |
-| "What percentage of classes are HIIT in Q1 2025?" | PDF (q1_2025_fitness_report) + pie chart image |
-| "Show me the membership growth chart" | PDF (q1_2025_fitness_report) + bar chart image |
-
 ## Project Structure
 
 ```
 agentic_rag/
-├── config.py                # Settings, paths, credentials
-├── models.py                # CatalogEntry, MetaResponse, GraphEdge
+├── config.py                # Settings, paths, model config
+├── models.py                # CatalogEntry, MetaResponse, ImageReference
 ├── llm.py                   # Shared Gemini client (API key or service account)
 ├── sample_data/
 │   ├── setup_sql.py         # SQLite schema + sample data
@@ -205,28 +165,28 @@ agentic_rag/
 │   ├── catalog.yaml         # Metadata for all 12 sources
 │   └── catalog_search.py    # Embed catalog into ChromaDB, vector search
 ├── knowledge_graph/
-│   └── graph.py             # NetworkX graph with 4 edge types
+│   └── graph.py             # NetworkX graph (present but unused by orchestrator)
 ├── ingestion/
-│   ├── pdf_pipeline.py      # pdfplumber extraction, LLM summaries, hierarchical chunking → ChromaDB
+│   ├── pdf_pipeline.py      # pdfplumber extraction, LLM summaries, hierarchical chunking
 │   ├── image_pipeline.py    # PyMuPDF image extraction → CLIP embedding → ChromaDB
 │   └── clip_embedder.py     # OpenCLIP ViT-B-32 lazy-loaded singleton
 ├── tools/
-│   ├── sql_tool.py          # Text-to-SQL → execute → MetaResponse
-│   ├── nosql_tool.py        # MongoDB query gen → execute → MetaResponse
-│   ├── pdf_tool.py          # Hybrid search (vector + BM25) + context expansion → MetaResponse
+│   ├── sql_tool.py          # Text-to-SQL generation + execution
+│   ├── nosql_tool.py        # MongoDB query generation + execution
+│   ├── pdf_tool.py          # Hybrid search (vector + BM25) + context expansion
 │   ├── bm25_search.py       # BM25Okapi keyword search with bigram tokenization
 │   ├── image_tool.py        # CLIP text-to-image search in ChromaDB
 │   └── image_describer.py   # Gemini Vision descriptions with disk caching
 └── agents/
-    ├── orchestrator.py      # Entry point (delegates to orchestrator_agent)
-    ├── orchestrator_agent.py # Gemini function-calling reasoning loop (vanilla, no framework)
+    ├── orchestrator.py      # Entry point — run_query() and run_query_stream()
+    ├── orchestrator_agent.py # Gemini function-calling reasoning loop (1 agent, 3 tools)
     ├── base.py              # BaseAgent abstract class with tracing
-    ├── messages.py          # Pydantic message types for inter-agent communication
-    ├── sql_agent.py         # SQL specialist with retry-on-error loop
-    ├── nosql_agent.py       # NoSQL specialist with retry-on-error loop
-    └── pdf_agent.py         # PDF specialist with vector search + context expansion
+    ├── messages.py          # Pydantic message types (SpecialistRequest, SpecialistResult, etc.)
+    ├── sql_agent.py         # SQL tool wrapper with retry-on-error loop
+    ├── nosql_agent.py       # NoSQL tool wrapper with retry-on-error loop
+    └── pdf_agent.py         # PDF tool wrapper (delegates to pdf_tool.search_pdfs)
 api/
 └── app.py                   # FastAPI backend (REST + SSE streaming)
 ui/
-└── src/App.tsx              # React chat UI with pipeline visualization
+└── src/App.tsx              # React chat UI with agent trace and image gallery
 ```

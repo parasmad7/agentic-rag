@@ -6,3 +6,4 @@ data/
 !catalog.yaml
 .DS_Store
 node_modules/
+ui/dist/

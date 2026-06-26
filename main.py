@@ -3,6 +3,7 @@
 import sys
 
 from agentic_rag.agents.orchestrator import run_query, run_query_logged
+from evals.runner import run_eval
 
 
 def print_result(result: dict):
@@ -66,6 +67,17 @@ def main():
         print_result(result)
         return
 
+    if len(sys.argv) > 1 and sys.argv[1] == "--eval":
+        case_ids = None
+        category = None
+        for arg in sys.argv[2:]:
+            if arg.startswith("--category="):
+                category = arg.split("=", 1)[1]
+            elif arg.startswith("--case="):
+                case_ids = arg.split("=", 1)[1].split(",")
+        run_eval(case_ids=case_ids, category=category)
+        return
+
     print("=" * 80)
     print("  AGENTIC RAG — Multi-Source Intelligence")
     print("  SQL (SQLite) | NoSQL (MongoDB) | PDFs")
@@ -74,6 +86,7 @@ def main():
     print("Commands:")
     print("  Type a question to query across all sources")
     print("  'setup'  — Initialize/reset all sample data")
+    print("  'eval'   — Run full eval suite")
     print("  'quit'   — Exit")
     print()
 
@@ -91,6 +104,9 @@ def main():
             break
         if question.lower() == "setup":
             setup_data()
+            continue
+        if question.lower() == "eval":
+            run_eval()
             continue
 
         print(f"\nProcessing: {question}")

@@ -1,0 +1,151 @@
+cases:
+  # ── Single-source: SQL ─────────────────────────────────────────
+  - id: sql_active_members
+    question: "How many active members does the gym have?"
+    category: single_source
+    difficulty: easy
+    expected_tools: [query_sql]
+    expected_sources: [members]
+    expected_facts:
+      - "count or number of active members"
+      - "specific numeric answer"
+
+  - id: sql_trainer_rates
+    question: "What is the average hourly rate of our personal trainers?"
+    category: single_source
+    difficulty: easy
+    expected_tools: [query_sql]
+    expected_sources: [trainers]
+    expected_facts:
+      - "average hourly rate"
+      - "specific dollar amount"
+
+  - id: sql_hiit_calories
+    question: "What is the average calories burned per HIIT workout session?"
+    category: single_source
+    difficulty: easy
+    expected_tools: [query_sql]
+    expected_sources: [workout_sessions]
+    expected_facts:
+      - "average calories for HIIT"
+      - "specific numeric answer"
+
+  # ── Single-source: NoSQL ───────────────────────────────────────
+  - id: nosql_low_rated_trainers
+    question: "Which trainers have the lowest ratings and what feedback did they receive?"
+    category: single_source
+    difficulty: easy
+    expected_tools: [query_nosql]
+    expected_sources: [trainer_reviews]
+    expected_facts:
+      - "trainer name(s) with low ratings"
+      - "specific feedback or review content"
+
+  - id: nosql_protein_intake
+    question: "What is the average daily protein intake across all members?"
+    category: single_source
+    difficulty: medium
+    expected_tools: [query_nosql]
+    expected_sources: [nutrition_logs]
+    expected_facts:
+      - "average protein in grams"
+
+  # ── Single-source: PDF ─────────────────────────────────────────
+  - id: pdf_emergency_procedures
+    question: "What is the emergency procedure for medical incidents at the gym?"
+    category: single_source
+    difficulty: easy
+    expected_tools: [search_pdfs]
+    expected_sources: [gym_safety_guidelines.pdf]
+    expected_facts:
+      - "emergency or medical incident procedure steps"
+
+  - id: pdf_q1_risks
+    question: "What are the key risks identified in the Q1 2025 fitness report?"
+    category: single_source
+    difficulty: easy
+    expected_tools: [search_pdfs]
+    expected_sources: [q1_2025_fitness_report.pdf]
+    expected_facts:
+      - "specific risk factors from the Q1 report"
+
+  - id: pdf_supplement_recs
+    question: "What supplements does the nutrition program recommend?"
+    category: single_source
+    difficulty: easy
+    expected_tools: [search_pdfs]
+    expected_sources: [nutrition_program_guide.pdf]
+    expected_facts:
+      - "specific supplement names or categories"
+
+  # ── Multi-source ───────────────────────────────────────────────
+  - id: multi_trainer_full_picture
+    question: "Tell me everything about Marcus Rivera — his rates, classes, and member reviews."
+    category: multi_source
+    difficulty: medium
+    expected_tools: [query_sql, query_nosql]
+    expected_sources: [trainers, trainer_reviews]
+    expected_facts:
+      - "Marcus Rivera's hourly rate"
+      - "review ratings or feedback about Marcus"
+
+  - id: multi_member_nutrition
+    question: "Compare Sarah Johnson's body metrics progress with her nutrition logs."
+    category: multi_source
+    difficulty: hard
+    expected_tools: [query_sql, query_nosql]
+    expected_sources: [body_metrics, nutrition_logs]
+    expected_facts:
+      - "Sarah Johnson's weight or body fat data"
+      - "Sarah Johnson's calorie or macro intake"
+
+  - id: multi_sql_and_pdf
+    question: "Are our current group classes following the safety guidelines for class capacity?"
+    category: multi_source
+    difficulty: hard
+    expected_tools: [query_sql, search_pdfs]
+    expected_sources: [classes, gym_safety_guidelines.pdf]
+    expected_facts:
+      - "class capacity or enrollment numbers"
+      - "safety guideline rules about capacity"
+
+  # ── Cross-reference & verification ─────────────────────────────
+  - id: cross_ref_revenue
+    question: "What is the total monthly revenue from active memberships, broken down by plan type?"
+    category: cross_reference
+    difficulty: medium
+    expected_tools: [query_sql]
+    expected_sources: [memberships]
+    expected_facts:
+      - "revenue broken down by plan type"
+      - "specific dollar amounts"
+
+  - id: cross_ref_health_risk
+    question: "Which members have health risk factors, and how are their workout habits?"
+    category: cross_reference
+    difficulty: hard
+    expected_tools: [query_nosql, query_sql]
+    expected_sources: [health_assessments, workout_sessions]
+    expected_facts:
+      - "member names with risk factors"
+      - "workout frequency or habits for those members"
+
+  # ── Off-topic (should refuse gracefully) ───────────────────────
+  - id: off_topic_weather
+    question: "What's the weather like in San Francisco today?"
+    category: off_topic
+    difficulty: easy
+    expected_tools: []
+    expected_sources: []
+    expected_facts:
+      - "polite refusal or explanation that this is outside scope"
+      - "mentions fitness center or available data sources"
+
+  - id: off_topic_code
+    question: "Write me a Python script to sort a list of numbers."
+    category: off_topic
+    difficulty: easy
+    expected_tools: []
+    expected_sources: []
+    expected_facts:
+      - "polite refusal or explanation that this is outside scope"

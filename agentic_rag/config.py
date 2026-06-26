@@ -23,6 +23,7 @@ MONGO_DB_NAME = "agentic_rag"
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash"
+EVAL_JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", "gemini-2.5-pro")
 
 SERVICE_ACCOUNT_KEY = BASE_DIR / "gradesmith-777-f3bddd865f41.json"
 GCP_PROJECT = "gradesmith-777"

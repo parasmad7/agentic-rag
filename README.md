@@ -1,66 +1,82 @@
-# Agentic RAG
+# Agentic RAG -- Linear Pipeline
 
-Scalable multi-source RAG system that queries across SQL databases, NoSQL (MongoDB), and PDFs using an agentic orchestration pipeline powered by Gemini.
+Deterministic 6-stage retrieval pipeline over SQL, NoSQL, and PDF sources -- no agents, no reasoning loops, just hardcoded control flow powered by Gemini.
+
+## Branch Comparison
+
+| Branch | Framework | Style |
+|---|---|---|
+| **[`linear-pipeline`](../../tree/linear-pipeline)** | **Gemini SDK direct** | **Fixed 6-stage pipeline, no agents** |
+| [`single-agent`](../../tree/single-agent) | Gemini function calling | 1 agent + 3 tools with retry |
+| [`main`](../../tree/main) | Gemini function calling | 4-agent reasoning loops + KG + cross-encoder |
+| [`crewai`](../../tree/crewai) | CrewAI | Agent/Crew/Task with tool delegation |
+| [`google-adk`](../../tree/google-adk) | Google ADK | Async agent with pre-turn hooks |
+| [`langgraph`](../../tree/langgraph) | LangGraph + Gemini | StateGraph with call_model / execute_tools cycle |
 
 ## Architecture
 
 ```
 User Query
-    │
-    ▼
-┌─────────────────────┐
-│   Semantic Cache     │──hit──▶ cached answer
-└─────────┬───────────┘
-          │ miss
-          ▼
-┌─────────────────────┐
-│  Domain Classifier  │ ▶ narrows to relevant domains
-│     (Gemini)        │
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Catalog Vector Search│ ▶ searches within selected domains
-│  (ChromaDB)         │ ▶ top-K candidates
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│   Schema Selector   │ ▶ LLM reranks to top-N
-│   + KG Expansion    │ ▶ knowledge graph adds related sources
-│     (Gemini)        │
-└─────────┬───────────┘
-          │
-          ▼  parallel fan-out
-    ┌─────┼─────────────┐
-    ▼     ▼             ▼
+    |
+    v
++---------------------+
+|  Domain Classifier   |  > narrows to relevant domains
+|     (Gemini)         |
++---------+-----------+
+          |
+          v
++---------------------+
+| Catalog Vector Search|  > top-K candidates from ChromaDB
++---------+-----------+
+          |
+          v
++---------------------+
+|   LLM Reranking     |  > selects top-N most relevant
+|   + KG Expansion    |  > knowledge graph adds related sources
++---------+-----------+
+          |
+          v  parallel fan-out
+    +-----+-------------+
+    v     v             v
   SQL   NoSQL         PDF
   Tool  Tool         Search
-    │     │             │
-    ▼     ▼             ▼
-  MetaResponse × N
-    │
-    ▼
-┌─────────────────────┐
-│    Synthesizer      │ ▶ combines all MetaResponses
-│     (Gemini)        │
-└─────────────────────┘
-          │
-          ▼
+    |     |             |
+    v     v             v
+  MetaResponse x N
+          |
+          v
++---------------------+
+|    Synthesizer       |  > combines all MetaResponses
+|     (Gemini)         |
++---------------------+
+          |
+          v
      Final Answer
 ```
+
+Every stage runs exactly once in sequence (fan-out is the only parallelism). Gemini is used for classification, reranking, and synthesis, but it never decides _which_ stage to run next -- the orchestrator does.
 
 ## Key Components
 
 | Component | Description |
 |---|---|
-| **Catalog** | YAML metadata registry for all sources, embedded into ChromaDB for semantic search |
-| **Knowledge Graph** | NetworkX graph with structural, semantic, governance, and derived edges connecting all sources |
-| **PDF Pipeline** | Hierarchical chunking (document → section → chunk) with small-to-big retrieval |
-| **SQL Tool** | Gemini generates SQL from table schemas, executes read-only with LIMIT, returns MetaResponse |
-| **NoSQL Tool** | Gemini generates MongoDB queries from collection schemas, returns MetaResponse |
-| **PDF Tool** | Vector search over chunked PDFs with parent section context expansion |
-| **Orchestrator** | Domain classify → catalog search → KG expand → parallel fan-out → synthesize |
+| **Orchestrator** | `agentic_rag/agents/orchestrator.py` -- fixed 6-stage pipeline with `run_query` (batch) and `run_query_stream` (SSE) |
+| **Catalog** | YAML metadata for all 12 sources, embedded into ChromaDB for vector search |
+| **Knowledge Graph** | NetworkX graph with structural/semantic/governance/derived edges connecting sources |
+| **SQL Tool** | Gemini generates SQL from table schema, executes read-only with LIMIT, returns `MetaResponse` |
+| **NoSQL Tool** | Gemini generates MongoDB aggregation pipelines from collection schema, returns `MetaResponse` |
+| **PDF Tool** | Vector search over chunked PDFs with parent-section context expansion, returns `MetaResponse` |
+| **PDF Pipeline** | Hierarchical chunking (document > section > chunk) with pdfplumber extraction |
+
+## Data Sources
+
+**SQL (SQLite, 6 tables):** members, trainers, workout_sessions, memberships, classes, body_metrics
+
+**NoSQL (MongoDB, 3 collections):** nutrition_logs, trainer_reviews, health_assessments
+
+**PDF (ChromaDB, 3 documents):** gym_safety_guidelines.pdf, q1_2025_fitness_report.pdf, nutrition_program_guide.pdf
+
+All sources share a fitness-center domain with four sub-domains: member_management, training, nutrition, wellness.
 
 ## Setup
 
@@ -68,42 +84,39 @@ User Query
 
 - Python 3.11+
 - MongoDB (local or Atlas)
-- GCP service account key with Vertex AI access (or `GEMINI_API_KEY`)
+- Gemini API key _or_ GCP service account with Vertex AI access
 
 ### Install
 
 ```bash
-# Install dependencies
 uv sync
+```
 
-# Start MongoDB (if not running)
+Start MongoDB if it is not already running:
+
+```bash
 brew services start mongodb/brew/mongodb-community
 ```
 
 ### Configure
 
-**Option A: GCP Service Account**
-
-Place your service account JSON key in the project root. Update `GCP_PROJECT` and the key filename in `agentic_rag/config.py`.
-
-**Option B: API Key**
+**Option A -- API Key:**
 
 ```bash
 export GEMINI_API_KEY="your-key"
 ```
 
-### Initialize Sample Data
+**Option B -- GCP Service Account:**
+
+Place the service-account JSON in the project root and update `GCP_PROJECT` / key filename in `agentic_rag/config.py`.
+
+### Initialize Data
 
 ```bash
 uv run python main.py --setup
 ```
 
-This creates:
-- SQLite database with 6 tables (departments, employees, vendors, invoices, purchase_orders, line_items)
-- MongoDB collections (customer_feedback, vendor_reviews, support_tickets)
-- 3 sample PDFs (expense policy, Q1 financial report, vendor onboarding guide)
-- ChromaDB vector indices for catalog and PDF chunks
-- Knowledge graph with 19 edges across all sources
+This creates the SQLite database (6 tables), MongoDB collections (3), sample PDFs (3), ChromaDB vector indices for catalog + PDF chunks, and the knowledge graph.
 
 ## Usage
 
@@ -116,51 +129,51 @@ uv run python main.py
 ### Single Query
 
 ```bash
-uv run python main.py --query "Are we paying vendors on time per policy?"
+uv run python main.py --query "Which members are losing weight and what are they eating?"
 ```
 
-### Example Queries
+### Web UI
 
-| Query | Sources Hit |
-|---|---|
-| "What's our total outstanding invoice amount?" | SQL (invoices) |
-| "What are customers saying about our support?" | MongoDB (customer_feedback, support_tickets) |
-| "What is the approval threshold for purchases over $50K?" | PDF (expense_policy) |
-| "Are we paying vendors on time per policy?" | SQL + PDF + MongoDB (cross-source) |
+Start the FastAPI backend and React dev server:
+
+```bash
+# Terminal 1 -- API
+uv run uvicorn api.app:app --reload
+
+# Terminal 2 -- UI
+cd ui && npm install && npm run dev
+```
+
+Open `http://localhost:5173`. The UI streams pipeline stages and tokens via SSE.
 
 ## Project Structure
 
 ```
 agentic_rag/
-├── config.py                # Settings, paths, credentials
-├── models.py                # CatalogEntry, MetaResponse, GraphEdge
-├── llm.py                   # Shared Gemini client (API key or service account)
-├── sample_data/
-│   ├── setup_sql.py         # SQLite schema + sample data
-│   ├── setup_mongo.py       # MongoDB collections + documents
-│   ├── generate_pdfs.py     # PDF generation with reportlab
-│   └── pdfs/                # Generated PDFs
-├── catalog/
-│   ├── catalog.yaml         # Metadata for all 12 sources
-│   └── catalog_search.py    # Embed catalog into ChromaDB, vector search
-├── knowledge_graph/
-│   └── graph.py             # NetworkX graph with 4 edge types
-├── ingestion/
-│   └── pdf_pipeline.py      # Hierarchical chunking → ChromaDB
-├── tools/
-│   ├── sql_tool.py          # Text-to-SQL → execute → MetaResponse
-│   ├── nosql_tool.py        # MongoDB query gen → execute → MetaResponse
-│   └── pdf_tool.py          # Vector search + context expansion → MetaResponse
-└── agents/
-    └── orchestrator.py      # Full pipeline orchestration
+  config.py                  # Paths, credentials, model settings
+  models.py                  # CatalogEntry, MetaResponse, GraphEdge
+  llm.py                     # Gemini client (API key or service account)
+  agents/
+    orchestrator.py           # 6-stage pipeline (run_query + run_query_stream)
+  catalog/
+    catalog.yaml              # Metadata for all 12 sources
+    catalog_search.py         # Embed catalog into ChromaDB, vector search
+  knowledge_graph/
+    graph.py                  # NetworkX graph with edge-type expansion
+  ingestion/
+    pdf_pipeline.py           # pdfplumber extraction + hierarchical chunking
+  tools/
+    sql_tool.py               # Text-to-SQL -> execute -> MetaResponse
+    nosql_tool.py             # MongoDB query gen -> execute -> MetaResponse
+    pdf_tool.py               # Vector search + context expansion -> MetaResponse
+  sample_data/
+    setup_sql.py              # SQLite schema + seed data
+    setup_mongo.py            # MongoDB collections + seed documents
+    generate_pdfs.py          # reportlab PDF generation
+    pdfs/                     # Generated sample PDFs
+api/
+  app.py                      # FastAPI backend (POST /api/query, /api/query/stream)
+ui/                           # React + Vite + Tailwind frontend
+main.py                       # CLI entry point (--setup, --query, interactive)
+pyproject.toml                # Dependencies (google-genai, chromadb, pymongo, etc.)
 ```
-
-## Scaling
-
-The architecture is designed to scale to 10,000+ sources:
-
-- **Catalog vector search** replaces putting all schemas in the prompt
-- **Domain classification** narrows search to relevant partitions
-- **Knowledge graph** auto-expands to related sources across types (SQL ↔ MongoDB ↔ PDF)
-- **Parallel tool execution** via ThreadPoolExecutor
-- **Hierarchical PDF chunking** with small-to-big retrieval for context preservation
